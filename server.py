@@ -526,7 +526,7 @@ class Dial_API_Service(Application):
         # If we don't see any dials, try looking/provisioning some
         if len(self.dial_handler.dials) <= 1:
             logger.info("No additional dials found. Searching the bus for new ones...")
-            dials = self.dial_handler.provision_dials(num_attempts=3)
+            self.dial_handler.provision_dials(num_attempts=3)
 
         handlers_config = { "handler":self.dial_handler, "config":self.config }
         self.handlers = [
