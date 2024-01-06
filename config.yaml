@@ -1,0 +1,9 @@
+server:
+  hostname: localhost
+  port: 5340
+  communication_timeout: 10
+  dial_update_period: 200
+  master_key: cTpAWYuRpA2zx75Yh961Cg
+
+hardware:
+  port: 

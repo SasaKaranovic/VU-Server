@@ -1,0 +1,276 @@
+
+        <!-- Page header -->
+        <div class="page-header d-print-none">
+          <div class="container-xl">
+            <div class="row g-2 align-items-center">
+              <div class="col">
+                <!-- Page pre-title -->
+                <div class="page-pretitle">
+                  Dial
+                </div>
+                <h2 class="page-title" id="dial-settings">
+                    Settings
+                </h2>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Page body -->
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="row row-deck row-cards">
+
+              <!-- Dial information -->
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title" id="dial-title">??</h3>
+                  </div>
+                  <div class="card-body">
+
+                    <div class="datagrid">
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Dial Status</div>
+                        <div class="datagrid-content">
+                          <span class="status status-green">
+                            Online
+                          </span>
+                        </div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Dial UID</div>
+                        <div class="datagrid-content user-select-all" id="dial-uid">??</div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Dial Generation</div>
+                        <div class="datagrid-content">VU1</div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Dial Type</div>
+                        <div class="datagrid-content" id="dial-type"></div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Firmware Version</div>
+                        <div class="datagrid-content user-select-all" id="dial-fw-version"></div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Firmware Build</div>
+                        <div class="datagrid-content user-select-all" id="dial-fw-build"></div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Hardware Revision</div>
+                        <div class="datagrid-content user-select-all" id="dial-hw-version"></div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Protocol Version</div>
+                        <div class="datagrid-content user-select-all" id="dial-protocol-version"></div>
+                      </div>
+
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Needle Update Period</div>
+                        <div class="datagrid-content">Every <span id="dial-easing-period"></span> ms</div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Max Needle Step Per Period</div>
+                        <div class="datagrid-content"><span id="dial-easing-step"></span> %</div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Backlight Update Period</div>
+                        <div class="datagrid-content">Every <span id="backlight-easing-period"></span> ms</div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Max Backlight Step Per Period</div>
+                        <div class="datagrid-content"><span id="backlight-easing-step"></span> %</div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title"></div>
+                        <div class="datagrid-content"></div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title"></div>
+                        <div class="datagrid-content"></div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title"></div>
+                        <div class="datagrid-content"></div>
+                      </div>
+                      <div class="datagrid-item">
+                        <div class="datagrid-title">Re-read FW&HW information</div>
+                        <div class="datagrid-content" id="dial-reload-container">
+                            <a href="#" class="btn btn-icon" aria-label="Button" id="dial-reload-info" data-bs-toggle="tooltip" data-bs-placement="top" title="Query the dial for firmware and hardware information. (These values are then cached on the server)">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-refresh-alert" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                               <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                               <path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"></path>
+                               <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"></path>
+                               <path d="M12 9l0 3"></path>
+                               <path d="M12 15l.01 0"></path>
+                            </svg>
+                            </a>
+                        </div>
+                      </div>
+
+                    </div>
+
+                  </div>
+                </div> <!-- Dial information -->
+
+              </div>
+
+
+            <!-- Dial setting -->
+            <div class="col-12">
+                <div class="row row-cards">
+
+                <div class="col-sm-6 col-lg-3">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">Dial Background</h3>
+                  </div>
+                  <div class="card-body">
+                        <div class="dial-background-container">
+                            <img id="dial-background-img" width="200" height="144" class="border" />
+                        </div>
+                  </div>
+                </div>
+                </div>
+
+
+                <div class="col-sm-6 col-lg-3">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">Set dial name</h3>
+                  </div>
+                  <div class="card-body">
+
+                    <div class="mb-3">
+                      <div class="row g-2">
+                        <div class="col">
+                          <input type="text" class="form-control" id="new-dial-name" placeholder="New dial name" />
+                        </div>
+                        <div class="col-auto">
+                          <a href="#" class="btn btn-icon" aria-label="Button" id="btn-change-name">
+
+<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-corner-down-left-double" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+   <path d="M19 5v6a3 3 0 0 1 -3 3h-7"></path>
+   <path d="M13 10l-4 4l4 4m-5 -8l-4 4l4 4"></path>
+</svg>
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+                </div>
+
+
+                <div class="col-sm-6 col-lg-3">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">Identify dial
+<span class="form-help" data-bs-toggle="popover" data-bs-placement="top" data-bs-html="true" data-bs-title="How does this feaure work?" data-bs-content="<p class='mb-1'>You can use this feature to physically identify which dial you are configuring by setting it's background to red, green, blue or off.</p><p class='mb-1'>Then you can take a look at your dials and confirm which dial you are configuring.</p><p class='mb-1'>p.s. Make sure dial is not being activelly controlled by another application because that will overwrite the effect of these buttons.</p>">?</span>
+                    </h3>
+
+                  </div>
+                  <div class="card-body">
+                        <button type="button" class="btn btn-red vu1-identify-button"
+                            data-sk-red="100"
+                            data-sk-green="0"
+                            data-sk-blue="0"
+                            data-sk-value="50"
+                            data-bs-toggle="tooltip"
+                            data-bs-placement="top"
+                            title="Dial will be set to 50% and RED background color.">Red</button>
+
+                        <button type="button" class="btn btn-green vu1-identify-button"
+                            data-sk-red="0"
+                            data-sk-green="100"
+                            data-sk-blue="0"
+                            data-sk-value="50"
+                            data-bs-toggle="tooltip"
+                            data-bs-placement="top"
+                            title="Dial will be set to 50% and GREEN background color.">Green</button>
+
+                        <button type="button" class="btn btn-blue vu1-identify-button"
+                            data-sk-red="0"
+                            data-sk-green="0"
+                            data-sk-blue="100"
+                            data-sk-value="50"
+                            data-bs-toggle="tooltip"
+                            data-bs-placement="top"
+                            title="Dial will be set to 50% and BLUE background color.">Blue</button>
+
+                        <button type="button" class="btn btn-black vu1-identify-button"
+                            data-sk-red="0"
+                            data-sk-green="0"
+                            data-sk-blue="0"
+                            data-sk-value="0"
+                            data-bs-toggle="tooltip"
+                            data-bs-placement="top"
+                            title="Dial will be set to 0% and background color will be turned off.">Off</button>
+                  </div>
+                </div>
+                </div>
+
+                <!-- <div class="col-sm-6 col-lg-3"></div> -->
+
+
+                <div class="col-sm-6 col-lg-3">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">Dial behaviour
+                        <span class="form-help"
+                            data-bs-toggle="popover"
+                            data-bs-placement="top"
+                            data-bs-html="true"
+                            data-bs-title="What is dial 'behaviour'?"
+                            data-bs-content="<p class='mb-1'>These are presets that configure how fast or slow the needle moves and how fast or slow the background color changes.</p><p class='mb-1'>This affects how responsive or smooth the dial 'feels'.</p><p class='mb-1'>Each application controlling the dial can configure this option with fine grain detail.</p>">?</span>
+                    </h3>
+
+                  </div>
+                  <div class="card-body">
+                        <button type="button" class="btn vu1-behaviour-button"
+                            data-bs-toggle="tooltip"
+                            data-bs-placement="top"
+                            title="Dial is very responsive but it will overshoot or 'oscillate' on large value changes."
+                            data-sk-dial-period="50"
+                            data-sk-dial-step="20"
+                            data-sk-backlight-period="50"
+                            data-sk-backlight-step="20">Responsive</button>
+
+                        <button type="button" class="btn vu1-behaviour-button"
+                            data-bs-toggle="tooltip"
+                            data-bs-placement="top"
+                            title="Balance between responsive and smooth dial"
+                            data-sk-dial-period="50"
+                            data-sk-dial-step="5"
+                            data-sk-backlight-period="50"
+                            data-sk-backlight-step="10">Balanced</button>
+
+                        <button type="button" class="btn vu1-behaviour-button"
+                            data-bs-toggle="tooltip"
+                            data-bs-placement="top"
+                            title="Dial is slowly moving to target value with minimum overshot or oscillation."
+                            data-sk-dial-period="50"
+                            data-sk-dial-step="1"
+                            data-sk-backlight-period="50"
+                            data-sk-backlight-step="5">Smooth</button>
+
+                  </div>
+                </div>
+                </div>
+
+
+              </div> <!-- Card row -->
+          </div> <!-- Dial setting -->
+
+
+
+        </div> <!-- Card row -->
+    </div> <!-- Container -->
+</div> <!-- Page body -->
+
+<script src="assets/js/vu1_gui_dial.js" defer></script>

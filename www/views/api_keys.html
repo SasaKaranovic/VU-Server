@@ -1,0 +1,151 @@
+        <!-- Page header -->
+        <div class="page-header d-print-none">
+          <div class="container-xl">
+            <div class="row g-2 align-items-center">
+              <div class="col">
+                <!-- Page pre-title -->
+                <div class="page-pretitle">
+                  Overview
+                </div>
+                <h2 class="page-title">
+                  API Keys
+                </h2>
+              </div>
+              <!-- Page title actions -->
+              <div class="col-auto ms-auto d-print-none">
+                <div class="btn-list">
+                  <a href="#" class="btn btn-primary d-none d-sm-inline-block" data-bs-toggle="modal" data-bs-target="#createNewKeyModal">
+                    <!-- Download SVG icon from http://tabler-icons.io/i/plus -->
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>
+                    Create new API key
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Page body -->
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="row row-deck row-cards">
+
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">VU1 API Keys</h3>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table card-table table-vcenter text-nowrap datatable" id="table_api_keys">
+                      <thead>
+                        <tr>
+                          <th class="w-1"></th>
+                          <th>Key name</th>
+                          <th>API Key</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+<!-- Add new profile modal -->
+<div class="modal modal-blur fade" id="createNewKeyModal" tabindex="-1" role="dialog" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Create new API key</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+
+            <div class="mb-3">
+              <label class="form-label">Key Name</label>
+              <input type="text" class="form-control" id="modal-new-key-name" name="modal-new-key-name" placeholder="Name the key to recognize it easier">
+            </div>
+
+            <div id="modal-ranges">
+
+                <div class="mb-3">
+                  <div class="mb-3" id="modal-select-header">Select one or more dials that this API key will be able to control</div>
+                  <div class="form-selectgroup" id="modal-dials-list">
+
+                  </div>
+                </div>
+
+                <div class="mb-3">
+            <a href="#" class="btn btn-primary ms-auto" id="modal-select-all">
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-select-all" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                   <path d="M8 8m0 1a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1z"></path>
+                   <path d="M12 20v.01"></path>
+                   <path d="M16 20v.01"></path>
+                   <path d="M8 20v.01"></path>
+                   <path d="M4 20v.01"></path>
+                   <path d="M4 16v.01"></path>
+                   <path d="M4 12v.01"></path>
+                   <path d="M4 8v.01"></path>
+                   <path d="M4 4v.01"></path>
+                   <path d="M8 4v.01"></path>
+                   <path d="M12 4v.01"></path>
+                   <path d="M16 4v.01"></path>
+                   <path d="M20 4v.01"></path>
+                   <path d="M20 8v.01"></path>
+                   <path d="M20 12v.01"></path>
+                   <path d="M20 16v.01"></path>
+                   <path d="M20 20v.01"></path>
+                </svg>
+              Select all dials
+            </a>
+
+            <a href="#" class="btn btn-primary ms-auto" id="modal-deselect-all">
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-deselect" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                   <path d="M12 8h3a1 1 0 0 1 1 1v3"></path>
+                   <path d="M16 16h-7a1 1 0 0 1 -1 -1v-7"></path>
+                   <path d="M12 20v.01"></path>
+                   <path d="M16 20v.01"></path>
+                   <path d="M8 20v.01"></path>
+                   <path d="M4 20v.01"></path>
+                   <path d="M4 16v.01"></path>
+                   <path d="M4 12v.01"></path>
+                   <path d="M4 8v.01"></path>
+                   <path d="M8 4v.01"></path>
+                   <path d="M12 4v.01"></path>
+                   <path d="M16 4v.01"></path>
+                   <path d="M20 4v.01"></path>
+                   <path d="M20 8v.01"></path>
+                   <path d="M20 12v.01"></path>
+                   <path d="M20 16v.01"></path>
+                   <path d="M3 3l18 18"></path>
+                </svg>
+              Select none
+            </a>
+                </div>
+
+            </div>
+
+          </div>
+          <div class="modal-footer">
+            <a href="#" class="btn btn-link link-secondary" data-bs-dismiss="modal">
+              Cancel
+            </a>
+            <a href="#" class="btn btn-primary ms-auto" id="modal-add-new-key">
+              <!-- Download SVG icon from http://tabler-icons.io/i/plus -->
+              <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>
+              Create new API key
+            </a>
+          </div>
+        </div>
+      </div>
+    </div> <!-- end Add new profile modal -->
+
+
+<script src="assets/js/vu1_gui_api_keys.js" defer></script>

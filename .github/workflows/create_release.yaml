@@ -1,0 +1,112 @@
+name: Create VU1 Server release
+
+on:
+  push:
+    # Sequence of patterns matched against refs/tags
+    tags:
+      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+    release:
+      types: [created, updated]
+
+jobs:
+  build:
+
+    runs-on: windows-latest
+
+    env:
+      App_Packages_Archive: VU1_Server
+      Actions_Allow_Unsecure_Commands: true # Allows AddPAth and SetEnv commands
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        update-environment: true
+        cache: 'pip' # caching pip dependencies
+
+    # Install python requirements
+    - run: pip install -r requirements.txt
+
+    # Create artifacts folder
+    - name: Create Artifact Folder
+      run: New-Item -Path '${{ github.workspace }}' -Name "Artifacts" -ItemType "directory"
+
+    - name: Set pythonpath
+      run: |
+        echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+
+    # PyInstaller
+    - run: >
+          pyinstaller.exe --name VUServer
+          --distpath="${{ github.workspace }}/Artifacts"
+          --clean
+          --path="${{ github.workspace }}"
+          --icon="www/favicon.ico"
+          --add-data="config.yaml;."
+          --add-data="www/assets/css/*;www/assets/css"
+          --add-data="www/assets/img/*;www/assets/img"
+          --add-data="www/assets/js/*;www/assets/js"
+          --add-data="www/views/*;www/views"
+          --add-data="www/*.png;www/"
+          --add-data="www/*.html;www/"
+          --add-data="www/*.ico;www/"
+          --add-data="upload/img_blank;upload/"
+          --hiddenimport="pywin32"
+          --hiddenimport="win32timezone"
+          --uac-admin
+          server.py
+
+    # Upload build artifacts
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.App_Packages_Archive }}
+        path: ${{ github.workspace }}/Artifacts/VUServer/*
+      if: ${{ always() }}
+
+    # Install NSIS
+    - name: Install NSIS
+      run: |
+        choco install nsis
+
+    - name: Create installer
+      run: |
+        makensis /DINSTALLEROUTPUT="${{ github.workspace }}\Artifacts\VU1-Installer.exe" /DDIRDIST="${{ github.workspace }}\Artifacts\VUServer" /DDIRSOURCE="${{ github.workspace }}" ${{ github.workspace }}\installer\install.nsi
+
+
+    # Upload installer
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.App_Packages_Archive }}_installer
+        path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe
+      if: ${{ always() }}
+
+    # Create the release:  https://github.com/actions/create-release
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        body: |
+          Changes in this Release
+          - First Change
+          - Second Change
+        draft: false
+        prerelease: false
+
+    # Upload release asset:   https://github.com/actions/upload-release-asset
+    - name: Update release assets
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}  # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+        asset_path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe
+        asset_name: ${{ env.App_Packages_Archive }}_installer.exe
+        asset_content_type: application/zip

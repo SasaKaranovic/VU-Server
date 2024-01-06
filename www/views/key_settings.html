@@ -1,0 +1,132 @@
+        <!-- Page header -->
+        <div class="page-header d-print-none">
+          <div class="container-xl">
+            <div class="row g-2 align-items-center">
+              <div class="col">
+                <!-- Page pre-title -->
+                <div class="page-pretitle">
+                  API Key Settings
+                </div>
+                <h2 class="page-title">
+                  <span class="text-uppercase vu1-key-name"></span>
+                </h2>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Page body -->
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="row row-deck row-cards">
+
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">Update API key `<span class="vu1-key-name"></span>`</h3>
+                  </div>
+
+<div class="card-body" id="key-settings" >
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content">
+          <div class="modal-body">
+
+            <div class="mb-3">
+              <label class="form-label">Key Name</label>
+              <input type="text" class="form-control vu1-key-name" id="input-key-name" name="modal-new-key-name" placeholder="Name the key to recognize it easier">
+            </div>
+
+            <div id="mb-3">
+
+                <div class="mb-3">
+                  <div class="mb-3" id="modal-select-header">Select one or more dials that this API key will be able to control</div>
+                  <div class="form-selectgroup" id="modal-dials-list">
+
+                  </div>
+                </div>
+
+                <div class="mb-3">
+            <a href="#" class="btn btn-primary ms-auto" id="modal-select-all">
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-select-all" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path><path d="M8 8m0 1a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1z"></path><path d="M12 20v.01"></path><path d="M16 20v.01"></path><path d="M8 20v.01"></path><path d="M4 20v.01"></path><path d="M4 16v.01"></path><path d="M4 12v.01"></path><path d="M4 8v.01"></path><path d="M4 4v.01"></path><path d="M8 4v.01"></path><path d="M12 4v.01"></path><path d="M16 4v.01"></path><path d="M20 4v.01"></path><path d="M20 8v.01"></path><path d="M20 12v.01"></path><path d="M20 16v.01"></path><path d="M20 20v.01"></path>
+                </svg>
+              Select all dials
+            </a>
+
+            <a href="#" class="btn btn-primary ms-auto" id="modal-deselect-all">
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-deselect" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                   <path d="M12 8h3a1 1 0 0 1 1 1v3"></path>
+                   <path d="M16 16h-7a1 1 0 0 1 -1 -1v-7"></path>
+                   <path d="M12 20v.01"></path>
+                   <path d="M16 20v.01"></path>
+                   <path d="M8 20v.01"></path>
+                   <path d="M4 20v.01"></path>
+                   <path d="M4 16v.01"></path>
+                   <path d="M4 12v.01"></path>
+                   <path d="M4 8v.01"></path>
+                   <path d="M8 4v.01"></path>
+                   <path d="M12 4v.01"></path>
+                   <path d="M16 4v.01"></path>
+                   <path d="M20 4v.01"></path>
+                   <path d="M20 8v.01"></path>
+                   <path d="M20 12v.01"></path>
+                   <path d="M20 16v.01"></path>
+                   <path d="M3 3l18 18"></path>
+                </svg>
+              Select none
+            </a>
+                </div>
+
+            </div>
+
+          </div>
+          <div class="mb-4"> </div>
+          <div class="mb-3">
+
+<div class="btn-list justify-content-end">
+            <a href="#" class="btn btn-danger" id="btn-delete-key">
+<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-trash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+   <path d="M4 7l16 0"></path>
+   <path d="M10 11l0 6"></path>
+   <path d="M14 11l0 6"></path>
+   <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"></path>
+   <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"></path>
+</svg>
+              Delete
+            </a>
+
+            <a href="index.html?page=api_keys" class="btn ms-auto" id="submit-cancel-key">
+              <!-- Download SVG icon from http://tabler-icons.io/i/plus -->
+              <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-circle-x" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+   <path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path>
+   <path d="M10 10l4 4m0 -4l-4 4"></path>
+</svg>
+              Cancel
+            </a>
+
+            <a href="#" class="btn btn-success justify-content-end" id="submit-update-key">
+              <!-- Download SVG icon from http://tabler-icons.io/i/plus -->
+              <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-circle-check-filled" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+   <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+   <path d="M17 3.34a10 10 0 1 1 -14.995 8.984l-.005 -.324l.005 -.324a10 10 0 0 1 14.995 -8.336zm-1.293 5.953a1 1 0 0 0 -1.32 -.083l-.094 .083l-3.293 3.292l-1.293 -1.292l-.094 -.083a1 1 0 0 0 -1.403 1.403l.083 .094l2 2l.094 .083a1 1 0 0 0 1.226 0l.094 -.083l4 -4l.083 -.094a1 1 0 0 0 -.083 -1.32z" stroke-width="0" fill="currentColor"></path>
+</svg>
+              Update key
+            </a>
+</div>
+
+          </div>
+        </div>
+      </div>
+    </div> <!-- end Add new profile modal -->
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+<script src="assets/js/vu1_gui_api_key_settings.js" defer></script>

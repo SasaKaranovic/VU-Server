@@ -1,0 +1,34 @@
+<service>
+
+    <!-- ID of the service. It should be unique across the Windows system-->
+    <id>VUServer</id>
+    <name>VU Server</name>
+
+    <!-- Path to the executable, which should be started -->
+    <!-- CAUTION: Don't put arguments here. Use <arguments> instead. -->
+    <executable>%BASE%\VUServer.exe</executable>
+
+    <description>This service runs VU Server service that creates a bridge between the VU Dials and rest of your system.</description>
+
+    <log mode="roll-by-size-time">
+      <sizeThreshold>10240</sizeThreshold>
+      <pattern>yyyyMMdd</pattern>
+      <autoRollAtTime>00:00:00</autoRollAtTime>
+    </log>
+
+    <!--
+    OPTION: stoptimeout
+    Time to wait for the service to gracefully shutdown the executable before we forcibly kill it.
+    Default value: 15 seconds
+    -->
+    <stoptimeout>15 sec</stoptimeout>
+
+    <!--
+    OPTION: startmode
+    Defines start mode of the service.
+    Supported modes: Automatic, Manual, Boot, System (latter ones are supported for driver services only)
+    Default mode: Automatic
+    -->
+    <startmode>Automatic</startmode>
+
+</service>
