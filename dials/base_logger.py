@@ -70,10 +70,10 @@ def set_logger_level(level='info'):
 log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(lineno)d) %(message)s')
 if sys.platform == "linux" or sys.platform == "linux2":
     # linux
-    logFile = '/home/sasa/vudials.log'
+    logFile = f'/home/{os.getlogin()}/vudials.log'
 elif sys.platform == "darwin":
-    # OS X
-    logFile = '/home/sasa/vudials.log'
+    # OS Xcat
+    logFile = f'/home/{os.getlogin()}/vudials.log'
 elif sys.platform == "win32":
     # Windows...
     logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'vudials', 'server.log')
