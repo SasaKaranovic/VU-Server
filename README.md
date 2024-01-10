@@ -4,7 +4,7 @@ Full documentation including installing information can be found on the [VU1 por
 
 ## Running from Source
 
-For users running on windows, that can be found on the [VU1 portal](https://vudials.com/). For users looking to install from the source code (OSX/Linux), the following will help you get started.
+For users running on windows, a native installer can be found on the [VU1 portal](https://vudials.com/). For users looking to install from the source code, the following will help you get started.
 
 ### Requirements
 
