@@ -10,9 +10,9 @@
 !define COMPANYNAME "KaranovicResearch"
 !define DESCRIPTION "Server application required for VU Dials operation"
 # These three must be integers
-!define VERSIONMAJOR 0
-!define VERSIONMINOR 1
-!define VERSIONBUILD 1
+!define VERSIONMAJOR {{VU_VERSION_MAJOR}}
+!define VERSIONMINOR {{VU_VERSION_MINOR}}
+!define VERSIONBUILD {{VU_VERSION_BUILD}}
 # These will be displayed by the "Click here for support information" link in "Add/Remove Programs"
 # It is possible to use "mailto:" links in here to open the email client
 !define HELPURL "http://forum.vudials.com" # "Support Information" link
@@ -109,14 +109,14 @@ Section "VUDials Server" VUDSERVER
   # Set the INSTALLSIZE constant (!defined at the top of this script) so Add/Remove Programs can accurately report the size
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "EstimatedSize" ${INSTALLSIZE}
 
-  # Create service
-  ;ExecWait 'sc create VUServer error= "severe" displayname= "VU Dials Server" type= "own" start= "auto" binpath= "$INSTDIR\${MAINEXE}"'
-
   ;Create uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
   ; Add VU1 to Windows start
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VUServer" '"$InstDir\VUServer.exe"'
+
+  ; Run the VU server
+  ExecShell "" "$InstDir\VUServer.exe"
 
 SectionEnd
 
