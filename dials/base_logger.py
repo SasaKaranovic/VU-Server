@@ -95,5 +95,3 @@ logger.propagate = False
 handler = logging.StreamHandler(stream=sys.stderr)
 handler.setFormatter(default_formatter())
 logger.addHandler(handler)
-
-
