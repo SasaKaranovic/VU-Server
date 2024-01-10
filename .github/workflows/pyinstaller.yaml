@@ -6,6 +6,7 @@ on:
       - "**.py"
       - "www/**"
       - "upload/**"
+      - "installer/**"
       - ".github/workflows/pyinstaller.yaml"
   pull_request:
     paths:
@@ -15,7 +16,7 @@ on:
       - ".github/workflows/pyinstaller.yaml"
 
 jobs:
-  build:
+  Installer:
 
     runs-on: windows-latest
 
@@ -43,6 +44,10 @@ jobs:
       run: |
         echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
 
+    - name: Add version stamp
+      run: |
+        python3 ${{ github.workspace }}/make_version.py
+
     # PyInstaller
     - run: >
           pyinstaller.exe --name VUServer
@@ -62,6 +67,7 @@ jobs:
           --hiddenimport="pywin32"
           --hiddenimport="win32timezone"
           --uac-admin
+          --noconsole
           server.py
 
     # Upload build artifacts

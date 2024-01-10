@@ -9,7 +9,7 @@ on:
       types: [created, updated]
 
 jobs:
-  build:
+  Release:
 
     runs-on: windows-latest
 
@@ -55,6 +55,7 @@ jobs:
           --hiddenimport="pywin32"
           --hiddenimport="win32timezone"
           --uac-admin
+          --noconsole
           server.py
 
     # Upload build artifacts
