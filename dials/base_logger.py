@@ -43,11 +43,14 @@ def default_formatter():
               ('%(message)s', 'green')]
 
     # platform_system() is 'Windows' on the powershell
-    if sys.stderr.isatty():
-        # If running in a TTY, show colored output
-        fmt = ' '.join([colorize(x[0], x[1]) for x in pieces])
-    else:
-        # If being directed or piped, show plaintext
+    try:
+        if sys.stderr.isatty():
+            # If running in a TTY, show colored output
+            fmt = ' '.join([colorize(x[0], x[1]) for x in pieces])
+        else:
+            # If being directed or piped, show plaintext
+            fmt = ' '.join([x[0] for x in pieces])
+    except AttributeError:
         fmt = ' '.join([x[0] for x in pieces])
 
     return logging.Formatter(fmt, "%b %d %Y %H:%M:%S")
@@ -76,7 +79,7 @@ elif sys.platform == "darwin":
     logFile = f'/home/{os.getlogin()}/vudials.log'
 elif sys.platform == "win32":
     # Windows...
-    logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'vudials', 'server.log')
+    logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'vudials', 'vudials.log')
 
 os.makedirs(os.path.dirname(logFile), exist_ok=True)
 log_file_handler = RotatingFileHandler(logFile, mode='a', maxBytes=1*1024*1024, backupCount=2, encoding=None, delay=0)
