@@ -80,11 +80,6 @@ Section "VUDials Server" VUDSERVER
   File /r "${DIRDIST}\*"
   File "${DIRSOURCE}\installer\inc\icon.ico"
 
-  ; WINSW to run as service
-  File "${DIRSOURCE}\installer\inc\install_server.xml"
-  File "${DIRSOURCE}\installer\inc\install_server.exe"
-
-
   # Start Menu
   createDirectory "$SMPROGRAMS\${COMPANYNAME}"
   createShortCut "$SMPROGRAMS\${COMPANYNAME}\${APPNAME}.lnk" "$INSTDIR\${MAINEXE}" "" "$INSTDIR\icon.ico"
@@ -120,9 +115,8 @@ Section "VUDials Server" VUDSERVER
   ;Create uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-  ; Create VU Server service
-  ExecWait '$INSTDIR\install_server.exe install"'
-  ExecWait '$INSTDIR\install_server.exe start"'
+  ; Add VU1 to Windows start
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VUServer" '"$InstDir\VUServer.exe"'
 
 SectionEnd
 
@@ -142,11 +136,6 @@ SectionEnd
 
 Section "Uninstall"
 
-  ; Remove service
-  ; Create VU Server service
-  ExecWait '$INSTDIR\install_server.exe stop"'
-  ExecWait '$INSTDIR\install_server.exe uninstall"'
-
   ; Install dir
   Delete "$INSTDIR\*.*"
   Delete "$INSTDIR\Uninstall.exe"
@@ -154,6 +143,6 @@ Section "Uninstall"
   RMDir /r "$INSTDIR"
 
   ; Remove windows start
-  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VUServer"
 
 SectionEnd
