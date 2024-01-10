@@ -10,14 +10,14 @@ def apply_version_tag(filepath, tag_placeholder, tag_value):
         print(f'Not a file! {filepath}')
         return False
 
-    with open(filepath, 'r') as template:
+    with open(filepath, 'r', encoding='utf-8') as template:
         content = template.read()
 
     if tag_placeholder in content:
         print(f"Patching `{filepath}` with tag `{tag_value}`")
-    content = content.replace(tag_placeholder, version_tag)
+    content = content.replace(tag_placeholder, tag_value)
 
-    with open(filepath, 'w') as stamped:
+    with open(filepath, 'w', encoding='utf-8') as stamped:
         stamped.write(content)
 
     return True
