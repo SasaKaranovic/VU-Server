@@ -18,7 +18,6 @@ def apply_version_tag(filepath, tag_placeholder, tag_value):
     content = content.replace(tag_placeholder, version_tag)
 
     with open(filepath, 'w') as stamped:
-        Writing data to a file
         stamped.write(content)
 
     return True
