@@ -1,4 +1,5 @@
 import os
+import getpass
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
@@ -73,7 +74,7 @@ def set_logger_level(level='info'):
 log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(lineno)d) %(message)s')
 if sys.platform == "linux" or sys.platform == "linux2":
     # linux
-    logFile = f'/home/{os.getlogin()}/vudials.log'
+    logFile = f'/home/{getpass.getuser()}/vudials.log'
 elif sys.platform == "darwin":
     # OS Xcat
     logFile = f'/home/{os.getlogin()}/vudials.log'
