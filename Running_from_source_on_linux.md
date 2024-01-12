@@ -26,6 +26,28 @@ After that you can start VU server by running `python3 server.py`
 Now you can access VU server web GUI by navigating to http://localhost:5340 in your browser.
 
 
+## How to fix "OSError: [Errno 13] Permission denied: '/dev/ttyUSBx'" error
+
+On some distributions you will need to explicitly allow access to `/dev/ttyUSBx` where `x` is usually a number (ie `/dev/ttyUSB0`).
+
+There are multiple ways to do this.
+
+You can temporarily grant access by running `sudo chmod 666 /dev/ttyUSB0`. But you will most likely have to run this command every time you re-plug in the hub.
+
+More permanent solution involves creating a udev rule
+
+```bash
+# navigate to rules.d directory
+cd /etc/udev/rules.d
+#create a new rule file
+sudo touch vu-rule.rules
+# open the file
+sudo nano vu-rule.rules
+# add the following
+KERNEL=="ttyUSB0", MODE="0666"
+```
+
+
 # Example command line usage
 
 Ideally you would have an application/service/script that updates VU dials for you.
