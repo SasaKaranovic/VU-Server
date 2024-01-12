@@ -32,7 +32,9 @@ On some distributions you will need to explicitly allow access to `/dev/ttyUSBx`
 
 There are multiple ways to do this.
 
-You can temporarily grant access by running `sudo chmod 666 /dev/ttyUSB0`. But you will most likely have to run this command every time you re-plug in the hub.
+You can temporarily grant access by running `sudo chmod 666 /dev/ttyUSB0`.
+
+But you will have to run this command every time you re-plug in the hub, which is not very practical.
 
 More permanent solution involves creating a udev rule
 
@@ -46,6 +48,8 @@ sudo nano vu-rule.rules
 # add the following
 KERNEL=="ttyUSB0", MODE="0666"
 ```
+
+Please note that you will have to reboot your machine in order for new udev rules to take effect.
 
 
 # Example command line usage
