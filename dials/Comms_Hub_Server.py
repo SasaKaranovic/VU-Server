@@ -61,7 +61,6 @@ class hub_commands:
     COMM_CMD_DIAL_BTL_EXIT = 0xFB
     COMM_CMD_DIAL_BTL_RESTART_FW_UPLOAD = 0xFC
     COMM_CMD_DIAL_BTL_READ_LAST_STATUS = 0xFD
-    COMM_CMD_LAST = None
 
 class hub_data_types:
     COMM_DATA_FIRST = 0x00
@@ -71,7 +70,6 @@ class hub_data_types:
     COMM_DATA_KEY_VALUE_PAIR = 0x04
     COMM_DATA_MULTIPLE_KEY_VALUE = 0x04
     COMM_DATA_STATUS_CODE = 0x05
-    COMM_DATA_LAST = None
 
 class hub_status_codes:
     GAUGE_STATUS_OK = 0x0000
