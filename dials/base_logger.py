@@ -76,6 +76,7 @@ log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(line
 if sys.platform in ["linux", "linux2"]:
     logFile = f'/home/{getpass.getuser()}/vudials.log'
 
+# MacOS
 elif sys.platform == "darwin":
     logFile = f'~/Library/Logs/vudials/vudials.log'
 
