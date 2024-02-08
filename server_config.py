@@ -3,12 +3,14 @@ import os
 from ruamel.yaml import YAML
 # import yaml
 from dials.base_logger import logger
+from vu_notifications import show_error_msg, show_warning_msg
 import database as db
 
 class ServerConfig:
     config_path = None
     server = None
-    server_default = {'hostname': 'localhost', 'port': 3000, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
+    hardware = None
+    server_default = {'hostname': 'localhost', 'port': 3000, 'communication_timeout': 10, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
     hardware_default = {'port': None }
     dials = {}
     api_keys = {}
@@ -51,6 +53,9 @@ class ServerConfig:
     def _load_config(self):
         if not os.path.exists(self.config_path):
             logger.error(f"Can not load config. Config file '{self.config_path}' does not exist!")
+            show_error_msg("Can not find config.yaml", f"Config file '{self.config_path}' is missing!\r\n"\
+                           "Please fix this issue by creating a default config.yaml file in the VU Server directory.\r\n"\
+                           "Using default values for this session.")
             self._create_default_config()
             return False
 
@@ -59,7 +64,49 @@ class ServerConfig:
             cfg = yaml.load(file)  # pylint: disable=assignment-from-no-return
 
         if cfg is None:
+            show_error_msg("Empty/corrupt config file!", "Config file exists but it is empty or corrupt!\r\n"\
+                           "Using defaul values for this session.")
             self._create_default_config()
+            return False
+
+        # Check that config file meets the minimum requirements
+        if not isinstance(cfg, dict) or 'server' not in cfg or 'hardware' not in cfg:
+            show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
+                             "Must have valid entries for 'server' and 'hardware' configuration!\r\n"\
+                             "Using defaul values for this session.")
+            cfg = {}
+            cfg['server'] = self.server_default
+            cfg['hardware'] = self.hardware_default
+
+        elif not isinstance(cfg['server'], dict):
+            show_warning_msg("Invalid server config", f"Config file '{self.config_path}' \r\n"\
+                             "Has invalid `server` config entry.\r\n"\
+                             "Using defaul values for this session.")
+            self._force_default_config()
+            return False
+
+        elif not isinstance(cfg['hardware'], dict):
+            show_warning_msg("Invalid server config", f"Config file '{self.config_path}' \r\n"\
+                             "Has invalid `hardware` config entry.\r\n"\
+                             "Using defaul values for this session.")
+            self._force_default_config()
+            return False
+
+        elif ('hostname' not in cfg['server'] or
+             'port' not in cfg['server'] or
+             'communication_timeout' not in cfg['server'] or
+             'master_key' not in cfg['server']):
+            show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
+                             "must have `hostname`, `port`, `communication_timeout` and `master_key` entries!\r\n"\
+                             "Using defaul values for this session.")
+            self._force_default_config()
+            return False
+
+        elif 'port' not in cfg['hardware']:
+            show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
+                             "must have hardware `port` entry! (it can be left empty)\r\n"\
+                             "Using defaul values for this session.")
+            self._force_default_config()
             return False
 
         # Load yaml values
@@ -68,9 +115,14 @@ class ServerConfig:
 
         return True
 
+    def _force_default_config(self):
+        self.server = self.server_default
+        self.hardware = self.hardware_default
+
     def _create_default_config(self):
         logger.info("Using default config values")
         self.server = self.server_default
+        self.hardware = self.hardware_default
 
     # Load API keys from config file
     def _load_API_keys(self):
