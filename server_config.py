@@ -16,10 +16,10 @@ class ServerConfig:
     api_keys = {}
     database = None
 
-    def __init__(self, config_file='config.yaml'):
-        self.config_path =  os.path.join(os.path.dirname(__file__), config_file)
+    def __init__(self, config_path, state_path):
+        self.config_path = config_path
         logger.info(f"VU1 config yaml file: {self.config_path}")
-        self.database = db.DialsDB(init_if_missing=True)
+        self.database = db.DialsDB(database_path=state_path, init_if_missing=True)
         self._load_config()     # Load configuration from .yaml file
         self._load_API_keys()   # Load API keys from `api_keys` section
         self.debug_config()

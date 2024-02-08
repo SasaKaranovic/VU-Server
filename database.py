@@ -6,14 +6,12 @@ from dials.base_logger import logger
 class DialsDB:
     connection = None
 
-    def __init__(self, database_file='vudials.db', init_if_missing=False):
-        # database_path = os.path.join(os.path.expanduser('~'), 'KaranovicResearch', 'vudials')
-        database_path = os.path.join(os.path.dirname(__file__))
+    def __init__(self, database_path, init_if_missing=False):
 
         if not os.path.exists(database_path):
             os.makedirs(database_path)
 
-        self.database_file =  os.path.join(database_path, database_file)
+        self.database_file = os.path.join(database_path, 'vudials.db')
         logger.info(f"VU1 Database file: {self.database_file}")
 
         if not os.path.exists(self.database_file) and not init_if_missing:

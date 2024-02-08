@@ -1,11 +1,12 @@
 import sys
 import os
+import getpass
 import signal
 import argparse
 import zlib
 import time
 from mimetypes import guess_type
-from dials.base_logger import logger, set_logger_level
+from dials.base_logger import logger, setup_logger, default_log_file
 from tornado.web import Application, RequestHandler, Finish, StaticFileHandler
 from tornado.ioloop import IOLoop, PeriodicCallback
 from dial_driver import DialSerialDriver
@@ -16,10 +17,12 @@ from vu_notifications import show_error_msg, show_info_msg
 BASEDIR_NAME = os.path.dirname(__file__)
 BASEDIR_PATH = os.path.abspath(BASEDIR_NAME)
 WEB_ROOT = os.path.join(BASEDIR_PATH, 'www')
+DEFAULT_CONFIG_PATH = os.path.join(BASEDIR_PATH, 'config.yaml')
+DEFAULT_LOG_PATH = default_log_file()
 
 def pid_lock(service_name, create=True):
     file_name = "service.{}.pid.lock".format(service_name)
-    pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), file_name)
+    pid_file = os.path.join(pidfile_path, file_name)
 
     if create:
         pid = os.getpid()
@@ -30,10 +33,10 @@ def pid_lock(service_name, create=True):
             os.remove(pid_file)
 
 class BaseHandler(RequestHandler):
-    def initialize(self, handler, config):
+    def initialize(self, handler, config, state_path):
         self.handler = handler # pylint: disable=attribute-defined-outside-init
         self.config = config # pylint: disable=attribute-defined-outside-init
-        self.upload_path = os.path.join(os.path.dirname(__file__), 'upload') # pylint: disable=attribute-defined-outside-init
+        self.upload_path = os.path.join(state_path, 'upload') # pylint: disable=attribute-defined-outside-init
 
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
@@ -213,7 +216,7 @@ class Dial_Get_Image(BaseHandler):
         self.set_header("Content-Type", "image/png")
 
         logger.debug("Request: GET_IMAGE")
-        dial_image = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
+        dial_image = os.path.join(self.upload_path, f'img_{gaugeUID}')
 
         if os.path.exists(dial_image):
             filepath = dial_image
@@ -235,7 +238,7 @@ class Dial_Get_Image_CRC(BaseHandler):
     def get(self, gaugeUID):
         logger.debug("Request: GET_IMAGE_CRC")
 
-        img_file = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
+        img_file = os.path.join(self.upload_path, f'img_{gaugeUID}')
 
         crc = self.get_file_crc(img_file)
         return self.send_response(status='ok', data=crc)
@@ -503,11 +506,15 @@ class FileHandler(RequestHandler):
 
 
 class Dial_API_Service(Application):
-    def __init__(self):
+    def __init__(self, config_path, state_path):
+        self.state_path = state_path;
+        # ensure the state path exists.
+        os.makedirs(self.state_path, exist_ok=True)
+
         pid_lock('server', True)
 
         logger.info("Loading server config...")
-        self.config = ServerConfig('config.yaml')
+        self.config = ServerConfig(config_path, state_path);
 
         # If config contains COM port, use it. Otherwise try to find it
         hardware_config = self.config.get_hardware_config()
@@ -533,7 +540,7 @@ class Dial_API_Service(Application):
             logger.info("No additional dials found. Searching the bus for new ones...")
             self.dial_handler.provision_dials(num_attempts=3)
 
-        handlers_config = { "handler":self.dial_handler, "config":self.config }
+        handlers_config = { "handler":self.dial_handler, "config":self.config, "state_path":self.state_path }
         self.handlers = [
             (r"/api/v0/dial/provision", Dial_Provision, handlers_config),
             (r"/api/v0/dial/list", Dial_Get_List, handlers_config),
@@ -620,12 +627,18 @@ def shutdown():
 def main(cmd_args=None):
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+    config_path = DEFAULT_CONFIG_PATH
+    state_path = BASEDIR_NAME
     if cmd_args is None:
-        set_logger_level('info')
+        setup_logger(DEFAULT_LOG_PATH, 'info')
     else:
-        set_logger_level(cmd_args.logging)
+        setup_logger(cmd_args.log_path, cmd_args.logging)
+        config_path = cmd_args.config_path
+        state_path = cmd_args.state_path
+        global pidfile_path
+        pidfile_path = cmd_args.lock_path
     try:
-        Dial_API_Service().run_forever()
+        Dial_API_Service(config_path, state_path).run_forever()
     except Exception:
         logger.exception("VU Dials API service crashed during setup.")
         show_error_msg("Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
@@ -634,5 +647,18 @@ def main(cmd_args=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Karanovic Research - VU Dials API service')
     parser.add_argument('-l', '--logging', type=str, default='info', help='Set logging level. Default is `info`')
+    paths = parser.add_argument_group('paths', 'Filesystem paths used by the server.')
+    paths.add_argument('--state-path',
+                        type=str, default=BASEDIR_PATH,
+                        help='Path to a directory where the server will store its runtime state, such as the database file and images. Default is `{}`'.format(BASEDIR_PATH))
+    paths.add_argument('-c', '--config-path',
+                        type=str, default=DEFAULT_CONFIG_PATH,
+                        help='Path to the config file. Default is `{}`'.format(DEFAULT_CONFIG_PATH))
+    paths.add_argument('--lock-path',
+                        type=str, default=BASEDIR_PATH,
+                        help='Path to a directory where the server will store its PID lock file. Default is `{}`'.format(BASEDIR_PATH))
+    paths.add_argument('--log-path',
+                       type=str, default=DEFAULT_LOG_PATH,
+                       help='Path to the log file. Default is `{}`.'.format(DEFAULT_LOG_PATH))
     args = parser.parse_args()
     main(args)
