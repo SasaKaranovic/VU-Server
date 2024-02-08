@@ -11,6 +11,7 @@ from tornado.ioloop import IOLoop, PeriodicCallback
 from dial_driver import DialSerialDriver
 from server_config import ServerConfig
 from server_dial_handler import ServerDialHandler
+from vu_notifications import show_error_msg, show_info_msg
 
 BASEDIR_NAME = os.path.dirname(__file__)
 BASEDIR_PATH = os.path.abspath(BASEDIR_NAME)
@@ -517,7 +518,11 @@ class Dial_API_Service(Application):
             self.serialPort = DialSerialDriver.find_gauge_hub()
             if self.serialPort is None:
                 logger.error("Could not find VU1 Dials Hub. Please make sure it's plugged in and (if necessary) drivers are installed.")
-                raise Exception("Could not find VU1 Dials Hub. Please make sure it's plugged in and (if necessary) drivers are installed.")
+                show_error_msg("Hub not found", "Could not find VU1 Hub on the USB bus.\r\n"\
+                               "Please make sure it is plugged in and (if necessary) drivers are installed.\r\n"\
+                               "Then restart the VU Server application.\r\nVU server application will close now.")
+                sys.exit(0)
+                # raise Exception("Could not find VU1 Dials Hub. Please make sure it's plugged in and (if necessary) drivers are installed.")
 
         logger.info("VU1 HUB port: {}".format(self.serialPort))
         self.dial_driver = DialSerialDriver(self.serialPort)
@@ -572,13 +577,15 @@ class Dial_API_Service(Application):
         logger.info(f"VU1 API server is listening on http://localhost:{port}")
         app.listen(port)
 
-        if master_key:
-            logger.info("Master Key is present in config.yaml")
+        if master_key is not None:
+            logger.info("Master Key is present in config.yaml (or using default)")
             logger.info(f"Provide '{master_key}' to your main application.")
             logger.info("to allow it to manage this server and the VU dials.")
         else:
+            show_error_msg(title='Key missing from config', message='Entry "master_key" is missing from the "config.yaml"!')
             logger.error("Master Key is MISSING from config.yaml")
             logger.error("Check your 'config.yaml' or add it manually under 'server' section.")
+            sys.exit(0)
 
         pc = PeriodicCallback(self.dial_handler.periodic_dial_update, dial_update_period)
         pc.start()
@@ -590,6 +597,7 @@ def signal_handler(signal, frame):
     pid_lock('server', False)
     IOLoop.current().add_callback_from_signal(shutdown)
     print('\r\nYou pressed Ctrl+C!')
+    show_info_msg("CTRL+C", "CTRL+C pressed.\r\nVU Server app will exit now.")  # Remove if becomes annoying
     sys.exit(0)
 
 def shutdown():
@@ -619,11 +627,12 @@ def main(cmd_args=None):
     try:
         Dial_API_Service().run_forever()
     except Exception:
-        logger.exception("Dials API service crashed during setup.")
+        logger.exception("VU Dials API service crashed during setup.")
+        show_error_msg("Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
     os._exit(0)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Karanovic Research - Dials API service')
+    parser = argparse.ArgumentParser(description='Karanovic Research - VU Dials API service')
     parser.add_argument('-l', '--logging', type=str, default='info', help='Set logging level. Default is `info`')
     args = parser.parse_args()
     main(args)
