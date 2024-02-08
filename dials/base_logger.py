@@ -74,15 +74,15 @@ def set_logger_level(level='info'):
 log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(lineno)d) %(message)s')
 # Linux
 if sys.platform in ["linux", "linux2"]:
-    logFile = f'/home/{getpass.getuser()}/vudials.log'
+    logFile = f'/home/{getpass.getuser()}/KaranovicResearch/vudials/server.log'
 
 # MacOS
 elif sys.platform == "darwin":
-    logFile = f'~/Library/Logs/vudials/vudials.log'
+    logFile = f'~/Library/Logs/KaranovicResearch/vudials/server.log'
 
 # Windows
 elif sys.platform == "win32":
-    logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'vudials', 'vudials.log')
+    logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'KaranovicResearch', 'vudials', 'server.log')
 
 os.makedirs(os.path.dirname(logFile), exist_ok=True)
 log_file_handler = RotatingFileHandler(logFile, mode='a', maxBytes=1*1024*1024, backupCount=2, encoding=None, delay=0)
