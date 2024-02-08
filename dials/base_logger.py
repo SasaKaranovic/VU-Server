@@ -72,9 +72,14 @@ def set_logger_level(level='info'):
 '''
 # Basic logger setup
 log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(lineno)d) %(message)s')
-# Linux and MacOS
-if sys.platform in ["linux", "linux2", "darwin"]:
+# Linux
+if sys.platform in ["linux", "linux2"]:
     logFile = f'/home/{getpass.getuser()}/vudials.log'
+
+# MacOS
+elif sys.platform == "darwin":
+    logFile = f'~/Library/Logs/vudials/vudials.log'
+
 # Windows
 elif sys.platform == "win32":
     logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'vudials', 'vudials.log')
