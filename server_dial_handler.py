@@ -321,7 +321,6 @@ class ServerDialHandler:
             return False
 
         dial_info = self.server_config.dial_fetch_db_info(dial_uid)
-        logger.error(dial_info)
 
         self.dials[dial_uid]['fw_hash'] = dial_info['dial_build_hash']
         self.dials[dial_uid]['fw_version'] = dial_info['dial_fw_version']

@@ -300,7 +300,7 @@ class DialSerialDriver(SerialHardware):
     def dial_easing_get_config(self, dialID):
         easing = { 'dial_step':0, 'dial_period':0, 'backlight_step':0, 'backlight_period':0 }
         logger.debug(f"@dial_easing_get_config(dialID={dialID})")
-        ret = self._sendCommand(self.commands.COMM_CMD_GET_EASING_CONFIG, self.data_type.COMM_DATA_NONE)
+        ret = self._sendCommand(self.commands.COMM_CMD_GET_EASING_CONFIG, self.data_type.COMM_DATA_SINGLE_VALUE, 1, dialID)
         ret = self._convert_hex_str_to_byte_array(ret)
 
         easing['dial_step']         = int(ret[0]) << 24 | int(ret[1]) << 16 | int(ret[2]) << 8 | int(ret[3])
