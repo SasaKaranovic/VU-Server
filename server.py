@@ -4,6 +4,7 @@ import signal
 import argparse
 import zlib
 import time
+import re
 from mimetypes import guess_type
 from dials.base_logger import logger, set_logger_level
 from tornado.web import Application, RequestHandler, Finish, StaticFileHandler
@@ -298,8 +299,23 @@ class Dial_Set_Dial_Name(BaseHandler):
             return self.send_response(status='fail', message='Unauthorized', status_code=401)
 
         if new_name is not None:
-            self.config.update_dial_db_cell(dial_uid=gaugeUID, cell='dial_name', value=new_name)
-            return self.send_response(status='ok', status_code=201)
+            # Dial name should be 3 or more characters
+            if len(new_name) < 3:
+                return self.send_response(status='fail', message='Dial name should be at least 3 characters long.', status_code=400)
+
+            # Limit dial name to 30 characters
+            if len(new_name) > 30:
+                return self.send_response(status='fail', message='Dial name should be 30 characters or less.', status_code=400)
+
+            # Verify valid name
+            if not re.search(r"^[a-z0-9\-_\ ]*$", new_name, re.IGNORECASE):
+                return self.send_response(status='fail', message='Invalid characters! Only `A-Z`, `0-9`, `-`, `_` and space allowed.', status_code=400)
+
+            # Finally update dial name
+            ret = self.config.update_dial_db_cell(dial_uid=gaugeUID, cell='dial_name', value=new_name)
+            if ret:
+                return self.send_response(status='ok', status_code=201)
+            return self.send_response(status='fail', message='Can not update dial name! Dial does not exist?', status_code=406)
         return self.send_response(status='fail', message='Device not present!', status_code=406)
 
 class Dial_Reload_Device_Info(BaseHandler):

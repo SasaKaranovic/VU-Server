@@ -12,16 +12,21 @@ $(function() {
 
 $("#btn-change-name").on( "click", function() {
     const new_name = $("#new-dial-name").val();
-    console.log(new_name);
 
-    if ( (new_name != undefined) && (new_name !== "") )
+    if (
+        (new_name != undefined) &&
+        (new_name !== "") &&
+        (new_name.length >= 3) &&
+        (new_name.length <= 30)
+        )
     {
-        gui_update_dial_name(new_name);
         $("#new-dial-name").removeClass("is-invalid");
-        $("#new-dial-name").addClass("is-valid");
+        $("#dial-name-rules").hide();
+        gui_update_dial_name(new_name);
     }
     else
     {
+        $("#dial-name-rules").show();
         $("#new-dial-name").removeClass("is-valid");
         $("#new-dial-name").addClass("is-invalid");
     }
@@ -100,30 +105,75 @@ function gui_update_dial_value(v)
 function gui_update_dial_name(name)
 {
     const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/name?name='+ name +'&key='+ API_MASTER_KEY );
-    $('#dial-title').text('Name: '+ name);
-    $('#dial-name').text(name);
+
+    $.ajax({
+      url  : '/api/v0/dial/' + dial_uid  + '/name?name='+ name +'&key='+ API_MASTER_KEY,
+      type : 'GET',
+    })
+    .done(function(data, statusText, xhr){
+      var status = xhr.status;                //200
+        if (status == 201)
+        {
+            $('#dial-title').text('Name: '+ name);
+            $('#dial-name').text(name);
+            $("#dial-server-issue").hide();
+            $("#new-dial-name").addClass("is-valid");
+        }
+    })
+    .fail(function(data, statusText, xhr){
+        $("#dial-server-issue-message").text(statusText + ': '+ data['responseJSON']['message']);
+        $("#dial-server-issue").show();
+    });
+
+    // $.get( '/api/v0/dial/' + dial_uid  + '/name?name='+ name +'&key='+ API_MASTER_KEY );
+
 }
 
 function gui_update_dial_ui()
 {
     const dial_uid = $.urlParam('uid');
-    const dial_info = vu1_get_dial_info(dial_uid);
-    var dial_type = (dial_info['index'] == 0) ? 'HUB+Dial' : 'Dial';
 
-    $('#dial-title').text('Name: '+ dial_info['dial_name']);
-    $('#dial-name').text(dial_info['dial_name']);
-    $('#dial-uid').text(dial_info['uid']);
-    $('#dial-type').text(dial_type);
-    $('#dial-fw-version').text(dial_info['fw_version']);
-    $('#dial-fw-build').text(dial_info['fw_hash']);
-    $('#dial-hw-version').text(dial_info['hw_version']);
-    $('#dial-protocol-version').text(dial_info['protocol_version']);
-    $('#dial-easing-step').text(dial_info['easing']['dial_step']);
-    $('#dial-easing-period').text(dial_info['easing']['dial_period']);
-    $('#backlight-easing-step').text(dial_info['easing']['backlight_step']);
-    $('#backlight-easing-period').text(dial_info['easing']['backlight_period']);
-    $("#dial-background-img").attr("src","/api/v0/dial/"+dial_uid+"/image/get");
+    $.when( vu1_get_dial_info(dial_uid)  ).then(function(dial_info) {
+        if (Array.isArray(dial_info) == false || !('uid' in dial_info))
+        {
+            console.log("No dial information. Using default values");
+            // Dial does not exist. Create dummy dial data
+            var easing = [];
+            easing['dial_step'] = "??";
+            easing['dial_period'] = "??";
+            easing['backlight_step'] = "??";
+            easing['backlight_period'] = "??";
+
+            dial_info['dial_name'] = "Unknown (Invalid/Missing dial?)";
+            dial_info['uid'] = "NO-UID";
+            dial_info['fw_version'] = "??";
+            dial_info['fw_hash'] = "??";
+            dial_info['hw_version'] = "??";
+            dial_info['protocol_version'] = "??";
+            dial_info['easing'] = easing;
+            var dial_type = '?unknown?';
+        }
+        else
+        {
+            var dial_type = (dial_info['index'] == 0) ? 'HUB+Dial' : 'Dial';
+        }
+
+
+        $('#dial-title').text('Name: '+ dial_info['dial_name']);
+        $('#dial-name').text(dial_info['dial_name']);
+        $('#dial-uid').text(dial_info['uid']);
+        $('#dial-type').text(dial_type);
+        $('#dial-fw-version').text(dial_info['fw_version']);
+        $('#dial-fw-build').text(dial_info['fw_hash']);
+        $('#dial-hw-version').text(dial_info['hw_version']);
+        $('#dial-protocol-version').text(dial_info['protocol_version']);
+        $('#dial-easing-step').text(dial_info['easing']['dial_step']);
+        $('#dial-easing-period').text(dial_info['easing']['dial_period']);
+        $('#backlight-easing-step').text(dial_info['easing']['backlight_step']);
+        $('#backlight-easing-period').text(dial_info['easing']['backlight_period']);
+        $("#dial-background-img").attr("src","/api/v0/dial/"+dial_uid+"/image/get");
+
+    });
 }
 
 
