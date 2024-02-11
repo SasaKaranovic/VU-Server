@@ -521,6 +521,8 @@ class FileHandler(RequestHandler):
 class Dial_API_Service(Application):
     def __init__(self):
         pid_lock('server', True)
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        signal.signal(signal.SIGINT, self.signal_handler)
 
         logger.info("Loading server config...")
         self.config = ServerConfig('config.yaml')
@@ -581,6 +583,41 @@ class Dial_API_Service(Application):
             "default_handler_class": Default_404_Handler,
         }
 
+    def signal_handler(self, signal, frame):
+        pid_lock('server', False)
+        self.shut_down_dials()
+        IOLoop.current().add_callback_from_signal(self.shutdown_server)
+        print('\r\nYou pressed Ctrl+C!')
+        show_info_msg("CTRL+C", "CTRL+C pressed.\r\nVU Server app will exit now.")  # Remove if becomes annoying
+        sys.exit(0)
+
+    def shut_down_dials(self):
+        print("Shutting down dials...")
+        try:
+            for dial in self.dial_driver.dials:
+                logger.debug(f"Shutting down dial {dial}")
+                self.dial_driver.set_dial(dialID=dial, value=0)
+                self.dial_driver.dial_set_backlight(device=dial, red=0, green=0, blue=0, white=0)
+
+        except Exception as e:
+            logger.error("Failed to gracefully shut down dials")
+            logger.error(f"Error: {e}")
+
+    def shutdown_server(self):
+        logger.info('Stopping API server')
+        logger.info('Will shutdown in 3 seconds ...')
+        io_loop = IOLoop.instance()
+        deadline = time.time() + 3
+
+        def stop_loop():
+            now = time.time()
+            if now < deadline and (io_loop._callbacks or io_loop._timeouts):
+                io_loop.add_timeout(now + 1, stop_loop)
+            else:
+                io_loop.stop()
+                logger.info('Shutdown')
+        stop_loop()
+
     def run_forever(self):
         logger.info("Karanovic Research Dials - Starting API server")
         app = Application(self.handlers, **self.server_settings)
@@ -609,33 +646,7 @@ class Dial_API_Service(Application):
         IOLoop.instance().start()
 
 
-def signal_handler(signal, frame):
-    pid_lock('server', False)
-    IOLoop.current().add_callback_from_signal(shutdown)
-    print('\r\nYou pressed Ctrl+C!')
-    show_info_msg("CTRL+C", "CTRL+C pressed.\r\nVU Server app will exit now.")  # Remove if becomes annoying
-    sys.exit(0)
-
-def shutdown():
-    logger.info('Stopping API server')
-
-    logger.info('Will shutdown in 3 seconds ...')
-    io_loop = IOLoop.instance()
-    deadline = time.time() + 3
-
-    def stop_loop():
-        now = time.time()
-        if now < deadline and (io_loop._callbacks or io_loop._timeouts):
-            io_loop.add_timeout(now + 1, stop_loop)
-        else:
-            io_loop.stop()
-            logger.info('Shutdown')
-    stop_loop()
-
-
 def main(cmd_args=None):
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
     if cmd_args is None:
         set_logger_level('info')
     else:
