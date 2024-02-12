@@ -5,6 +5,7 @@ from dials.base_logger import logger
 
 class DialsDB:
     connection = None
+    database_changes = 0
 
     def __init__(self, database_file='vudials.db', init_if_missing=False):
         # database_path = os.path.join(os.path.expanduser('~'), 'KaranovicResearch', 'vudials')
@@ -211,7 +212,8 @@ class DialsDB:
 
 
     def _more_than_one_changed(self):
-        if self.connection.total_changes > 0:
+        if self.connection.total_changes > self.database_changes:
+            self.database_changes = self.connection.total_changes
             return True
         return False
 

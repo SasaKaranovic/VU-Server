@@ -138,11 +138,14 @@ class ServerConfig:
 
     def update_dial_db_cell(self, dial_uid, cell, value):
         try:
-            self.database.dial_update_cell(dial_uid=dial_uid, cell=cell, value=value)
-            self.dials[dial_uid][cell] = value
+            ret = self.database.dial_update_cell(dial_uid=dial_uid, cell=cell, value=value)
+            if ret:
+                self.dials[dial_uid][cell] = value
+                return True
+            return False
         except Exception as e:
             logger.error(e)
-            return
+            return False
 
     def update_dial_db_cell_with_dict(self, dial_uid, values_dict):
         try:
