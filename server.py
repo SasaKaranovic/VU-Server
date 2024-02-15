@@ -653,9 +653,11 @@ def main(cmd_args=None):
         set_logger_level(cmd_args.logging)
     try:
         Dial_API_Service().run_forever()
-    except Exception:
+    except Exception as e:
         logger.exception("VU Dials API service crashed during setup.")
-        show_error_msg("Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
+        show_error_msg("Crashed", "VU Server has crashed unexpectedly!\r\n"
+                       "Please check log files for more information.\r\n"
+                       f"Error: {e}")
     os._exit(0)
 
 if __name__ == '__main__':
