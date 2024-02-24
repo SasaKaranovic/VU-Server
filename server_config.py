@@ -4,6 +4,7 @@ from ruamel.yaml import YAML
 # import yaml
 from dials.base_logger import logger
 from vu_notifications import show_error_msg, show_warning_msg
+from vu_filesystem import VU_FileSystem
 import database as db
 
 class ServerConfig:
@@ -16,8 +17,8 @@ class ServerConfig:
     api_keys = {}
     database = None
 
-    def __init__(self, config_file='config.yaml'):
-        self.config_path =  os.path.join(os.path.dirname(__file__), config_file)
+    def __init__(self):
+        self.config_path =  VU_FileSystem.get_config_file_path()
         logger.info(f"VU1 config yaml file: {self.config_path}")
         self.database = db.DialsDB(init_if_missing=True)
         self._load_config()     # Load configuration from .yaml file

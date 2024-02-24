@@ -4,6 +4,7 @@ import sys
 import logging
 from logging.handlers import RotatingFileHandler
 from functools import partial, partialmethod
+from vu_filesystem import VU_FileSystem
 
 def colorize(data, color):
     colors = {'none': "0",
@@ -72,17 +73,7 @@ def set_logger_level(level='info'):
 '''
 # Basic logger setup
 log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(lineno)d) %(message)s')
-# Linux
-if sys.platform in ["linux", "linux2"]:
-    logFile = f'/home/{getpass.getuser()}/KaranovicResearch/vudials/server.log'
-
-# MacOS
-elif sys.platform == "darwin":
-    logFile = f'~/Library/Logs/KaranovicResearch/vudials/server.log'
-
-# Windows
-elif sys.platform == "win32":
-    logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'KaranovicResearch', 'vudials', 'server.log')
+logFile = VU_FileSystem.get_log_file_path();
 
 os.makedirs(os.path.dirname(logFile), exist_ok=True)
 log_file_handler = RotatingFileHandler(logFile, mode='a', maxBytes=1*1024*1024, backupCount=2, encoding=None, delay=0)
