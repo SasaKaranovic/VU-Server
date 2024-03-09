@@ -1,6 +1,13 @@
 name: Build VU1 Server
 
 on:
+  push:
+    paths:
+      - "**.py"
+      - "www/**"
+      - "upload/**"
+      - ".github/workflows/pyinstaller.yaml"
+
   pull_request:
     paths:
       - "**.py"
