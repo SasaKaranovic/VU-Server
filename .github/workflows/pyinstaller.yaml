@@ -60,7 +60,6 @@ jobs:
           --hiddenimport="pywin32"
           --hiddenimport="win32timezone"
           --uac-admin
-          --noconsole
           server.py
 
     # Upload build artifacts
