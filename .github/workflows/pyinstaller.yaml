@@ -1,6 +1,10 @@
 name: Build VU1 Server
 
 on:
+  push:
+    branches:
+    - 'build_*'
+    - 'master'
   pull_request:
     paths:
       - "**.py"
@@ -15,8 +19,6 @@ jobs:
 
     env:
       App_Packages_Archive: VU1_Server
-      Solution_Path: VU1WPF
-      Actions_Allow_Unsecure_Commands: true # Allows AddPAth and SetEnv commands
 
     steps:
     - uses: actions/checkout@v4
@@ -71,20 +73,22 @@ jobs:
         path: ${{ github.workspace }}/Artifacts/VUServer/*
       if: ${{ always() }}
 
-    # Install NSIS
-    - name: Install NSIS
-      run: |
-        choco install nsis
-
-    - name: Create installer
-      run: |
-        makensis /DINSTALLEROUTPUT="${{ github.workspace }}\Artifacts\VU1-Installer.exe" /DDIRDIST="${{ github.workspace }}\Artifacts\VUServer" /DDIRSOURCE="${{ github.workspace }}" ${{ github.workspace }}\installer\install.nsi
-
-
-    # Upload installer
-    - name: Upload build artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: ${{ env.App_Packages_Archive }}_installer.exe
-        path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe
-      if: ${{ always() }}
+    # We are currently limited to offline signing.
+    # So we are skipping the online installer creation
+    ## Install NSIS
+    #- name: Install NSIS
+    #  run: |
+    #    choco install nsis
+    #
+    #- name: Create installer
+    #  run: |
+    #    makensis /DINSTALLEROUTPUT="${{ github.workspace }}\Artifacts\VU1-Installer.exe" /DDIRDIST="${{ github.workspace }}\Artifacts\VUServer" /DDIRSOURCE="${{ github.workspace }}" ${{ github.workspace }}\installer\install.nsi
+    #
+    #
+    ## Upload installer
+    #- name: Upload build artifact
+    #  uses: actions/upload-artifact@v3
+    #  with:
+    #    name: ${{ env.App_Packages_Archive }}_installer.exe
+    #    path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe
+    #  if: ${{ always() }}
