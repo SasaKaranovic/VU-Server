@@ -15,7 +15,6 @@ jobs:
 
     env:
       App_Packages_Archive: VU1_Server
-      Solution_Path: VU1WPF
 
     steps:
     - uses: actions/checkout@v4
