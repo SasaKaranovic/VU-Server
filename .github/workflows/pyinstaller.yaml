@@ -1,6 +1,10 @@
 name: Build VU1 Server
 
 on:
+  push:
+    branches:
+    - 'build_*'
+    - 'master'
   pull_request:
     paths:
       - "**.py"
@@ -16,7 +20,6 @@ jobs:
     env:
       App_Packages_Archive: VU1_Server
       Solution_Path: VU1WPF
-      Actions_Allow_Unsecure_Commands: true # Allows AddPAth and SetEnv commands
 
     steps:
     - uses: actions/checkout@v4
