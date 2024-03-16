@@ -15,7 +15,7 @@ jobs:
 
     env:
       App_Packages_Archive: VU1_Server
-      Actions_Allow_Unsecure_Commands: true # Allows AddPAth and SetEnv commands
+      Solution_Path: VU1WPF
 
     steps:
     - uses: actions/checkout@v4
@@ -35,6 +35,10 @@ jobs:
     - name: Set pythonpath
       run: |
         echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+
+    - name: Add version stamp
+      run: |
+        python3 ${{ github.workspace }}/make_version.py
 
     # PyInstaller
     - run: >
@@ -80,7 +84,7 @@ jobs:
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ env.App_Packages_Archive }}_installer
+        name: ${{ env.App_Packages_Archive }}_installer.exe
         path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe
       if: ${{ always() }}
 
@@ -97,7 +101,7 @@ jobs:
           Changes in this Release
           - First Change
           - Second Change
-        draft: false
+        draft: true
         prerelease: false
 
     # Upload release asset:   https://github.com/actions/upload-release-asset
