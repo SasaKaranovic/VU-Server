@@ -71,13 +71,13 @@ jobs:
         name: VU_Server
         root-directory: ${{ github.workspace }}\Artifacts\VUServer
 
-- name: Archive Release
-      uses: thedoctor0/zip-release@0.7.5
-      with:
-        type: 'zip'
-        directory: ${{ github.workspace }}\Artifacts\VUServer
-        filename: 'VUServer.zip'
-        exclusions: '*.git* /*node_modules/* .editorconfig'
+    - name: Archive Release
+          uses: thedoctor0/zip-release@0.7.5
+          with:
+            type: 'zip'
+            directory: ${{ github.workspace }}\Artifacts\VUServer
+            filename: 'VUServer.zip'
+            exclusions: '*.git* /*node_modules/* .editorconfig'
 
     # We are currently limited to offline signing.
     # So we are skipping the online installer creation
