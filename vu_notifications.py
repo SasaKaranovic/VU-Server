@@ -17,8 +17,13 @@ if sys.platform.lower() == "win32":
 
 else:
     def show_error_msg(title, message):
-        pass
+        print(f"VU Server - {title}")
+        print(message)
+
     def show_warning_msg(title, message):
-        pass
+        print(f"VU Server - {title}")
+        print(message)
+
     def show_info_msg(title, message):
-        pass
+        print(f"VU Server - {title}")
+        print(message)

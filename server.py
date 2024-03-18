@@ -6,13 +6,14 @@ import zlib
 import time
 import re
 from mimetypes import guess_type
-from dials.base_logger import logger, set_logger_level
 from tornado.web import Application, RequestHandler, Finish, StaticFileHandler
 from tornado.ioloop import IOLoop, PeriodicCallback
+from dials.base_logger import logger, set_logger_level
 from dial_driver import DialSerialDriver
 from server_config import ServerConfig
 from server_dial_handler import ServerDialHandler
 from vu_notifications import show_error_msg, show_info_msg
+from vu_filesystem import VU_FileSystem
 
 BASEDIR_NAME = os.path.dirname(__file__)
 BASEDIR_PATH = os.path.abspath(BASEDIR_NAME)
@@ -20,7 +21,7 @@ WEB_ROOT = os.path.join(BASEDIR_PATH, 'www')
 
 def pid_lock(service_name, create=True):
     file_name = "service.{}.pid.lock".format(service_name)
-    pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), file_name)
+    pid_file = os.path.join(VU_FileSystem.get_pid_lock_file_path(), file_name)
 
     if create:
         pid = os.getpid()
@@ -34,7 +35,7 @@ class BaseHandler(RequestHandler):
     def initialize(self, handler, config):
         self.handler = handler # pylint: disable=attribute-defined-outside-init
         self.config = config # pylint: disable=attribute-defined-outside-init
-        self.upload_path = os.path.join(os.path.dirname(__file__), 'upload') # pylint: disable=attribute-defined-outside-init
+        self.upload_path = VU_FileSystem.get_upload_directory_path() # pylint: disable=attribute-defined-outside-init
 
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
@@ -186,7 +187,6 @@ class Device_Set_Image(BaseHandler):
         return self.send_response(status='ok', message='Image CRC already maches existing one. Skipping update.')
 
     def handle_image_upload(self, dial_uid):
-        self.make_upload_folder()
         image_data = self.request.files.get('imgfile', None)
         if image_data is None:
             logger.error("imgfile field missing from request.")
@@ -205,22 +205,18 @@ class Device_Set_Image(BaseHandler):
             return True
         return False
 
-    def make_upload_folder(self):
-        if not os.path.exists(self.upload_path):
-            os.makedirs(self.upload_path)
-
 class Dial_Get_Image(BaseHandler):
     def get(self, gaugeUID):
         self.set_header("Content-Type", "image/png")
 
         logger.debug("Request: GET_IMAGE")
-        dial_image = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
+        dial_image = os.path.join(VU_FileSystem.get_upload_directory_path(), f'img_{gaugeUID}')
 
         if os.path.exists(dial_image):
             filepath = dial_image
             logger.debug(f"Serving image from {filepath}")
         else:
-            filepath = os.path.join(os.path.dirname(__file__), 'upload', 'img_blank')
+            filepath = os.path.join(VU_FileSystem.get_upload_directory_path(), 'img_blank')
             logger.debug(f"Serving DEFAULT image from {filepath}")
 
         try:
@@ -236,7 +232,7 @@ class Dial_Get_Image_CRC(BaseHandler):
     def get(self, gaugeUID):
         logger.debug("Request: GET_IMAGE_CRC")
 
-        img_file = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
+        img_file = os.path.join(VU_FileSystem.get_upload_directory_path(), f'img_{gaugeUID}')
 
         crc = self.get_file_crc(img_file)
         return self.send_response(status='ok', data=crc)
@@ -392,7 +388,6 @@ class Dial_Get_Easing_Config(BaseHandler):
         if not self.is_valid_api_key():
             return self.send_response(status='fail', message='Unauthorized', status_code=401)
 
-        # TODO: Implement in dial handler
         return self.send_response(status='ok', message="not supported yet")
 
 # -- Keys --
@@ -525,7 +520,7 @@ class Dial_API_Service(Application):
         signal.signal(signal.SIGINT, self.signal_handler)
 
         logger.info("Loading server config...")
-        self.config = ServerConfig('config.yaml')
+        self.config = ServerConfig()
 
         # If config contains COM port, use it. Otherwise try to find it
         hardware_config = self.config.get_hardware_config()
@@ -638,7 +633,7 @@ class Dial_API_Service(Application):
             show_error_msg(title='Key missing from config', message='Entry "master_key" is missing from the "config.yaml"!')
             logger.error("Master Key is MISSING from config.yaml")
             logger.error("Check your 'config.yaml' or add it manually under 'server' section.")
-            sys.exit(0)
+            sys.exit(-1)
 
         pc = PeriodicCallback(self.dial_handler.periodic_dial_update, dial_update_period)
         pc.start()
@@ -656,7 +651,8 @@ def main(cmd_args=None):
     except Exception:
         logger.exception("VU Dials API service crashed during setup.")
         show_error_msg("Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
-    os._exit(0)
+        sys.exit(-1)
+    sys.exit(0)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Karanovic Research - VU Dials API service')
