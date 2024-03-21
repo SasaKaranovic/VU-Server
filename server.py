@@ -149,9 +149,7 @@ class Device_Backlight_Handler(BaseHandler):
 
 class Device_Set_Image(BaseHandler):
     def post(self, dial_uid):
-        get_force = self.get_argument('force', False)
-
-        force_img_update = bool(get_force is True)
+        force_img_update = self.get_argument('force', 'false') == 'true'
 
         logger.debug(f"Request:SET_IMAGE - Device:{dial_uid}")
 
