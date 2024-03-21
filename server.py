@@ -149,9 +149,7 @@ class Device_Backlight_Handler(BaseHandler):
 
 class Device_Set_Image(BaseHandler):
     def post(self, dial_uid):
-        get_force = self.get_argument('force', False)
-
-        force_img_update = bool(get_force is True)
+        force_img_update = self.get_argument('force', 'false') == 'true'
 
         logger.debug(f"Request:SET_IMAGE - Device:{dial_uid}")
 
@@ -183,7 +181,7 @@ class Device_Set_Image(BaseHandler):
             return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
         logger.debug(f"Skipping dial `{dial_uid}` image update. Contents already match.")
-        return self.send_response(status='ok', message='Image CRC already maches existing one. Skipping update.')
+        return self.send_response(status='ok', message='Image CRC already matches existing one. Skipping update.')
 
     def handle_image_upload(self, dial_uid):
         self.make_upload_folder()
