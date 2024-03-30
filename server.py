@@ -12,7 +12,8 @@ from tornado.ioloop import IOLoop, PeriodicCallback
 from dial_driver import DialSerialDriver
 from server_config import ServerConfig
 from server_dial_handler import ServerDialHandler
-from vu_notifications import show_error_msg, show_info_msg
+from vu_notifications import show_error_msg, show_info_msg, show_warning_msg
+from serial.serialutil import SerialException
 
 BASEDIR_NAME = os.path.dirname(__file__)
 BASEDIR_PATH = os.path.abspath(BASEDIR_NAME)
@@ -653,8 +654,12 @@ def main(cmd_args=None):
         set_logger_level(cmd_args.logging)
     try:
         Dial_API_Service().run_forever()
-    except Exception:
+    except SerialException:
+        logger.exception("VU Dials API service - Serial port access denied")
+        show_warning_msg("Serial Port Access Denied", "VU Server failed to start. Access to serial port denied.\r\nVU Server already running?")
+    except Exception as e:
         logger.exception("VU Dials API service crashed during setup.")
+        logger.exception(f"Unhandled exception: ({type(e)}) {e}")
         show_error_msg("Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
     os._exit(0)
 
