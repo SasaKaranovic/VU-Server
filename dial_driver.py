@@ -19,6 +19,11 @@ class DialSerialDriver(SerialHardware):
     # the caller for the full timeout on every retry.
     BACKLIGHT_READ_TIMEOUT = 0.5
 
+    # A percent-set is ACKed just as promptly (measured 15-19ms on the wire, and
+    # not gated on the easing animation either), so it gets the same short read
+    # window rather than the 5s default.
+    DIAL_SET_READ_TIMEOUT = 0.5
+
     def __init__(self, port_info):
         super(DialSerialDriver, self).__init__(port_info, timeout=2)
 
@@ -63,7 +68,7 @@ class DialSerialDriver(SerialHardware):
         response = self.serial_transaction(payload, ignore_response=ignore_response, read_timeout=read_timeout)
         if ignore_response:
             return True
-        return self._parseResponse(response)
+        return self._parseResponse(response, expected_cmd=cmd)
 
     def _send_cmd_with_uin32(self, dialID, cmd, value, dt=None):
         if dt is None:
@@ -71,7 +76,14 @@ class DialSerialDriver(SerialHardware):
         data = [dialID, ((value>>24)&0xFF), ((value>>16)&0xFF), ((value>>8)&0xFF), (value&0xFF)]
         return self._sendCommand(cmd, dt, len(data), data)
 
-    def _parseResponse(self, response):
+    def _parseResponse(self, response, expected_cmd=None):
+        """Pull this command's reply out of the received lines.
+
+        The hub echoes the command byte back in its reply, so when expected_cmd
+        is given, a reply carrying a different command is a reply to something
+        else and must be skipped -- accepting it silently returns another
+        command's status (or payload) as though it were ours.
+        """
         for idx, line in enumerate(response):
             logger.debug(line)
             if line.startswith('<'):
@@ -81,11 +93,23 @@ class DialSerialDriver(SerialHardware):
                 data = line[9:]
                 ret = {'cmd':cmd, 'dataType':dataType, 'dataLen':dataLen, 'data':data}
 
+                if expected_cmd is not None and not self._cmd_matches(cmd, expected_cmd):
+                    logger.error(f"_parseResponse: ignoring reply for command 0x{cmd} "
+                                 f"while awaiting 0x{expected_cmd:02X}: {line!r}")
+                    continue
+
                 logger.debug(f"_parseResponse: matched line {idx+1}/{len(response)}: {line!r}")
                 if dataType == self.data_type.COMM_DATA_STATUS_CODE:
                     return self._checkStatus(ret['data'])
                 return ret['data']
         return False
+
+    def _cmd_matches(self, cmd, expected_cmd):
+        try:
+            return int(cmd, 16) == expected_cmd
+        except ValueError:
+            logger.error(f"_cmd_matches: malformed command byte {cmd!r}")
+            return False
 
     def _checkStatus(self, statusCode):
         if int(statusCode, 16) == self.status_codes.GAUGE_STATUS_OK:
@@ -348,7 +372,13 @@ class DialSerialDriver(SerialHardware):
         if self.dials.get(int(dialID), False):
             self.dials[int(dialID)]['value'] = value
         data = [dialID, (value&0xFF)]
-        return self._sendCommand(self.commands.COMM_CMD_SET_DIAL_PERC_SINGLE, self.data_type.COMM_DATA_KEY_VALUE_PAIR, len(data), data, ignore_response=True)
+        # The hub DOES ACK a percent-set (`>0304...` -> `<0305000400000000`).
+        # Sending this with ignore_response=True left that ACK sitting in the RX
+        # buffer, where the next command on the shared port consumed it as its
+        # own reply -- a backlight write would return the percent-set's status
+        # instead of its own. Read the ACK here, bounded by a short timeout so a
+        # silent dial still can't stall the serial worker.
+        return self._sendCommand(self.commands.COMM_CMD_SET_DIAL_PERC_SINGLE, self.data_type.COMM_DATA_KEY_VALUE_PAIR, len(data), data, read_timeout=self.DIAL_SET_READ_TIMEOUT)
 
     def dial_multiple_set_percent(self, devices, values):
         logger.debug(f"@dial_multiple_set_percent(devices={devices}, values={values})")
