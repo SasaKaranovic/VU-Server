@@ -47,6 +47,7 @@ hardware:
   port:
 ```
 
+- `hostname` is the address the server binds to. `localhost` (the default) only accepts connections from the same machine. To reach the server from other devices on your network, set it to a specific interface address or leave it empty (`hostname:`) to bind all interfaces -- and change `master_key` first.
 - `master_key` is the admin key used to create/manage other API keys. Change it from the default before exposing the server beyond your own machine.
 - `hardware.port` can be left blank; the server will auto-detect the VU1 hub on the USB bus. Set it explicitly if you need to pin a specific serial port.
 
