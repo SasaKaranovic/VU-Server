@@ -141,8 +141,16 @@ class ServerDialHandler:
         updated = 0
         for _, dial in self.dials.items():
             if dial['value_changed']:
-                self.dial_driver.dial_single_set_percent(dial['index'], dial['value'])
-                dial['value_changed'] = False
+                # Snapshot what we send. Request handlers on the IOLoop thread
+                # can queue a newer value while this call is on the bus; the
+                # pending flag may only be cleared if the cache still holds
+                # exactly what went out, otherwise the newer value is lost --
+                # and can't even be re-requested, because dial_set_percent
+                # short-circuits on "cache already equals requested".
+                value = dial['value']
+                self.dial_driver.dial_single_set_percent(dial['index'], value)
+                if dial['value'] == value:
+                    dial['value_changed'] = False
                 dial['update_deadline'] = time() + self.communication_timeout
                 updated = updated+1
         if updated>0:
@@ -165,11 +173,16 @@ class ServerDialHandler:
             if now < dial.get('backlight_retry_after', 0):
                 continue
 
+            # Snapshot the colour we send. dial_set_backlight() on the IOLoop
+            # thread replaces dial['backlight'] with a new dict (never mutates
+            # it in place), so this reference stays exactly what went out even
+            # if a newer colour is queued while we're on the bus.
+            colour = dial['backlight']
             sent = self.dial_driver.dial_set_backlight(dial['index'],
-                                                dial['backlight']['red'],
-                                                dial['backlight']['green'],
-                                                dial['backlight']['blue'],
-                                                dial['backlight']['white']
+                                                colour['red'],
+                                                colour['green'],
+                                                colour['blue'],
+                                                colour['white']
                                                 )
             # Only mark the update as delivered if the driver confirmed the
             # write. Clearing the flag on a failed send would leave the cached
@@ -192,7 +205,11 @@ class ServerDialHandler:
                                  f"retrying in {backoff:g}s (attempt {fail_count}).")
                 continue
 
-            dial['backlight_changed'] = False
+            # Only mark delivered if nothing newer was queued mid-send;
+            # otherwise leave the flag set so the next poll pushes the new
+            # colour instead of silently dropping it.
+            if dial['backlight'] == colour:
+                dial['backlight_changed'] = False
             dial['backlight_fail_count'] = 0
             dial['backlight_retry_after'] = 0
             dial['backlight_unresponsive'] = False
