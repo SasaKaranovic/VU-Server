@@ -92,7 +92,7 @@ def _hub_driver():
     driver.data_type = types.SimpleNamespace(
         COMM_DATA_MULTIPLE_VALUE=0x03,
         COMM_DATA_KEY_VALUE_PAIR=0x04,
-        COMM_DATA_STATUS_CODE='05',
+        COMM_DATA_STATUS_CODE=0x05,
     )
     driver.status_codes = types.SimpleNamespace(GAUGE_STATUS_OK=0x0000)
     return driver
