@@ -3,6 +3,10 @@ from time import time, sleep
 from math import trunc
 from dials.base_logger import logger
 
+# Where Device_Set_Image stores per-dial images (`img_<uid>`) and where the
+# shipped fallback `img_blank` lives.
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'upload')
+
 # ServerDialHandler Class
 # ---
 # This class handles all the requests coming from the server.
@@ -121,12 +125,16 @@ class ServerDialHandler:
             self.dial_set_easing_backlight(dial['uid'], step=backlight_step, period=backlight_period)
 
     def _check_upload_for_dial_image(self, dial_uid):
-        filename = f'img_{dial_uid}'
-        filepath = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'upload', filename)
+        # Always return an absolute path: this value is handed straight to
+        # DialSerialDriver.display_send_image when the dial is re-armed by a
+        # reset. Returning the bare filename made that lookup relative to the
+        # process CWD, so it never found the file and the display -- already
+        # cleared by update_display -- was left blank.
+        filepath = os.path.join(UPLOAD_DIR, f'img_{dial_uid}')
         if os.path.exists(filepath):
-            return filename
+            return filepath
 
-        return 'img_blank'
+        return os.path.join(UPLOAD_DIR, 'img_blank')
 
     # TODO: Update to send multiple/all dial values in one go instead one-by-one
     def _periodic_update_dial_values(self):
