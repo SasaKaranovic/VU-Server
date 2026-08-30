@@ -734,10 +734,18 @@ class Dial_API_Service(Application):
         # Port from config.yaml or default 5340
         server_config = self.config.get_server_config()
         port = server_config.get('port', 5340)
+        # Bind to the configured hostname. This used to be ignored (bare
+        # `app.listen(port)` binds every interface), so `hostname: localhost`
+        # in config.yaml silently exposed the API -- with a well-known default
+        # master key and CORS `*` -- to the whole LAN. An empty hostname is the
+        # explicit opt-in for all interfaces.
+        hostname = server_config.get('hostname', 'localhost')
+        if hostname is None:
+            hostname = ''
         master_key = server_config.get('master_key', None)
         dial_update_period = server_config.get('dial_update_period', 1000)
-        logger.info(f"VU1 API server is listening on http://localhost:{port}")
-        app.listen(port)
+        logger.info(f"VU1 API server is listening on http://{hostname or '0.0.0.0'}:{port}")
+        app.listen(port, address=hostname)
 
         if master_key is not None:
             logger.info("Master Key is present in config.yaml (or using default)")

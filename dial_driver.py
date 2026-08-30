@@ -99,10 +99,21 @@ class DialSerialDriver(SerialHardware):
                     continue
 
                 logger.debug(f"_parseResponse: matched line {idx+1}/{len(response)}: {line!r}")
-                if dataType == self.data_type.COMM_DATA_STATUS_CODE:
+                # `dataType` is a two-char hex *string* off the wire; the
+                # protocol constant is an int. Comparing them directly never
+                # matched, so status-code replies were returned as their raw
+                # (truthy) payload and hub errors passed as success.
+                if self._is_status_reply(dataType):
                     return self._checkStatus(ret['data'])
                 return ret['data']
         return False
+
+    def _is_status_reply(self, dataType):
+        try:
+            return int(dataType, 16) == self.data_type.COMM_DATA_STATUS_CODE
+        except ValueError:
+            logger.error(f"_is_status_reply: malformed data-type byte {dataType!r}")
+            return False
 
     def _cmd_matches(self, cmd, expected_cmd):
         try:
@@ -112,9 +123,14 @@ class DialSerialDriver(SerialHardware):
             return False
 
     def _checkStatus(self, statusCode):
-        if int(statusCode, 16) == self.status_codes.GAUGE_STATUS_OK:
+        try:
+            code = int(statusCode, 16)
+        except ValueError:
+            logger.error(f"_checkStatus: malformed status payload {statusCode!r}")
+            return False
+        if code == self.status_codes.GAUGE_STATUS_OK:
             return True
-        logger.error("Error code: {}".format(int(statusCode, 16)))
+        logger.error("Error code: {}".format(code))
         return False
 
     def _convert_hex_str_to_str(self, hex_string):
