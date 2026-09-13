@@ -130,7 +130,7 @@ class ServerDialHandler:
                                                     dial['backlight']['red'],
                                                     dial['backlight']['green'],
                                                     dial['backlight']['blue'],
-                                                    dial['backlight']['white']
+                                                    dial['backlight'].get('white', 0)
                                                     )
                 dial['backlight_changed'] = False
                 dial['update_deadline'] = time() + self.communication_timeout
