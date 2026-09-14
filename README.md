@@ -1,80 +1,103 @@
 # VU Dials - VU Server
 
+> **Upstream is unmaintained.** The original [SasaKaranovic/VU-Server](https://github.com/SasaKaranovic/VU-Server) has received no commits since May 2024. This fork is the actively maintained continuation — see [Relationship to upstream](#relationship-to-upstream).
 
 ![VU1 Dial](assets/vu1_hello_world.png?raw=true "VU1 Dial")
 
-This is the official VU dials repository for the VU Server application and it's source code.
+VU Server is the server application for [VU1 dials](https://vudials.com). It talks to the VU1 hardware hub over serial/USB and exposes a simple HTTP API, so any third-party application, script, or service can control the dials without needing to know anything about the underlying hardware protocol.
 
-You can learn more about VU dials at [VUDials.com](https://vudials.com)
+For example, updating a dial is a single HTTP request:
 
-The VU Server is a key component of the VU dials.
+```bash
+curl "http://localhost:5340/api/v0/dial/<dial_uid>/set?value=50&key=<api_key>"
+```
 
-It provides a Web API that can be interfaced by any third party application/script/service, allowing it to easily interact with and control the VU dials.
+See the full [API documentation](https://docs.vudials.com/api_messaging/) for everything the server exposes.
 
-For example, in order to update a dial, any application can make a simple [API request](https://docs.vudials.com/api/dial_UID_set/) to the VU server and that's it.
+## Quick start
 
+**Windows** users can grab `VUServer.zip` from this fork's [latest release](https://github.com/erinlkolp/VU-Server/releases/latest). Note that the download on vudials.com is built from upstream and does not include any of the [fixes listed below](#relationship-to-upstream).
 
-# Demo application
+**Linux / macOS** users run from source:
 
-Right now, we have a very simple [VU1 demo application](https://github.com/SasaKaranovic/VU-Demo-App) that runs on Windows and demonstrates how dials can be used for resource usage monitoring.
+```bash
+git clone https://github.com/erinlkolp/VU-Server.git
+cd VU-Server
+pip3 install -r requirements.txt
+python3 server.py
+```
 
-You can download it from [VUDials Download page](https://vudials.com/download/demo_app) (or look at the [source code](https://github.com/SasaKaranovic/VU-Demo-App)).
+Then open `http://localhost:5340` in your browser for the server's web GUI (create API keys, name dials, etc).
 
-Demo application uses VU Server API to demonstrate how a third party application can interact with VU dials.
+For a more detailed walkthrough (including fixing the common `/dev/ttyUSBx` permission error on Linux) see [Running from source on Linux](Running_from_source_on_linux.md).
 
+## Configuration
 
-# Why not build apps for VU dials?
+Server settings live in `config.yaml`:
 
-You might ask why build an API server? Why not just build more stand-alone applications for VU dials? It's not that simple, but we believe that we have a good reason for this decision...
+```yaml
+server:
+  hostname: localhost
+  port: 5340
+  communication_timeout: 10
+  dial_update_period: 200
+  master_key: <your-master-key>
 
-VU dials can display virtually any information, and we all have our favourite/preferred applications for temperature monitoring, CPU/GPU/MEM load monitoring, weather app, stock monitoring, and the list can go on for days.
+hardware:
+  port:
+```
 
-If we started building new applications specifically for VU dials, we would be forcing our users to choose between their existing favourite application and the new one that works with VU dials.
+- `hostname` is the address the server binds to. `localhost` (the default) only accepts connections from the same machine. To reach the server from other devices on your network, set it to a specific interface address or leave it empty (`hostname:`) to bind all interfaces -- and change `master_key` first.
+- `master_key` is the admin key used to create/manage other API keys. Change it from the default before exposing the server beyond your own machine.
+- `hardware.port` can be left blank; the server will auto-detect the VU1 hub on the USB bus. Set it explicitly if you need to pin a specific serial port.
 
-In the long run, this would result in "splitting the community" or forcing users to choose between abandoning perfectly fine software packages or abandoning the option to show some information on the VU dials.
+## Development
 
-Instead, our approach is that we have completely opened the VU dials to the community and any third-party application/script/service running on your PC (or even network).
+Install dev dependencies (adds `pytest` on top of the runtime requirements):
 
-Any application can make a straightforward API request to the VU server and say, "Hey, update dial X to show the value of Y", and that's it.
+```bash
+pip3 install -r requirements-dev.txt
+```
 
-Making a web API request is a very simple thing to do in almost any software package.
+Run the test suite:
 
-So how does this benefit the community?
+```bash
+pytest tests/
+```
 
-This approach should allow existing applications to integrate/support VU dials natively or through extensions/addons/plugins. This means you still get to use your favourite application, but as a bonus, it now works seamlessly with VU dials.
+## Why a server instead of standalone apps?
 
-We are aware of the big caveat, which is that VU dial adoption won't happen over night and that it will require a lot of love and support from the community and developers.
+VU dials can display almost anything — CPU load, weather, stock prices, temperatures — and everyone already has their own favorite app for tracking that data. Rather than fragment the community with yet another dedicated app per use case, VU Server exposes a small HTTP API so *any* existing application, script, or service can drive the dials with a single request. That keeps you using the tools you already like, while letting them integrate with VU dials as a plugin/extension rather than a replacement.
 
-But we strongly believe that in the long run this is a much better approach than creating another closed-source, black-box product that forces you to use prescribed app store if you want to use the product.
+## Demo application
 
+The [VU1 demo application](https://github.com/SasaKaranovic/VU-Demo-App) ([download](https://vudials.com/download/demo_app)) shows dials driving resource-usage monitoring on Windows, built entirely on top of the VU Server API.
 
+See [community_applications.md](community_applications.md) for other scripts and integrations built by the community.
 
-# How to run/install VU Server
+## Relationship to upstream
 
-For Windows we have an installer that can be download from [https://vudials.com/download/server](https://vudials.com/download/server)
+VU Server was originally written by [Sasa Karanovic](https://github.com/SasaKaranovic) as the official server for VU1 dials. Full credit for the original design and hardware protocol work goes to him.
 
-For Linux and Mac users, we don't have the installer (yet), but you can run the VU Server from the source code.
+Upstream development stopped in May 2024. This fork picks it up from that last commit and has since added 60+ commits, including:
 
-We have a simple example that describes how to run VU Server from source code on a Linux machine.
+- **Security fixes** — SQL injection in `database.py` (every query is now parameterized), and API-key enforcement on device-status and image endpoints that previously served data unauthenticated.
+- **Stability fixes** — server hangs on shutdown, crashes on partial easing/backlight requests, phantom offline dials, false timeouts on dial writes, and a batch of serial-protocol bugs (response bleed-through, blocking I/O on the event loop, stale-buffer spin).
+- **Maintenance** — Python 3.12–3.14 support, pinned dependencies, Dependabot, and CI that actually runs the test suite and PyLint on every push.
+- **New features** — per-dial and bus-wide software reset, exposed via both the API and the web UI.
 
+Run `git log 62a4059..HEAD` for the complete list.
 
-[Jump to Linux Running From Source Code read me](Running_from_source_on_linux.md)
+**Where to file things:** open issues and pull requests against [this repository](https://github.com/erinlkolp/VU-Server/issues). Issues filed upstream are unlikely to get a response.
 
+**On licensing:** upstream never published a license file, so this fork inherits that ambiguity. Treat the code as all-rights-reserved by the original author unless and until that changes.
 
-# Want to contribute?
+## Contributing
 
-As mentioned, right now, VU Dials adoption is the main hurdle for everyone enjoying VU dials in combination with their favourite game/applications/service.
+If you build (or want to build) an integration, extension, or plugin that talks to VU dials, start with the [VU Dials API documentation](https://docs.vudials.com/api_messaging/). Non-developers can help by asking maintainers of their favorite apps to add VU dials support.
 
-For developers interested in supporting VU dials natively or through extension/addon/plugin, please take a look at [VU Dials API](https://docs.vudials.com/api_messaging/) documentation to learn how you can communicate with the dials through VU server.
-
-For non-developers interested in supporting VU dials; you can reach out to your favorite developers and let them know that you would appreciate if they could integrate VU dials in their software.
-
-We could use any and all the love that the community has to offer. :)
-
+Contributions to the server itself are welcome — see [Relationship to upstream](#relationship-to-upstream) for where to file them.
 
 ---
 
 [VU Dials Home page](https://vudials.com)
-
-
-

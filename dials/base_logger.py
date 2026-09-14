@@ -84,6 +84,10 @@ elif sys.platform == "darwin":
 elif sys.platform == "win32":
     logFile = os.path.join(os.path.expanduser(os.getenv('USERPROFILE')), 'KaranovicResearch', 'vudials', 'server.log')
 
+# Any other platform: fall back to a home-relative path so logFile is always set.
+else:
+    logFile = os.path.join(os.path.expanduser('~'), 'KaranovicResearch', 'vudials', 'server.log')
+
 os.makedirs(os.path.dirname(logFile), exist_ok=True)
 log_file_handler = RotatingFileHandler(logFile, mode='a', maxBytes=1*1024*1024, backupCount=2, encoding=None, delay=0)
 log_file_handler.setLevel(logging.DEBUG)

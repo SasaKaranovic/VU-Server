@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import random
+from threading import RLock
 from dials.base_logger import logger
 
 class DialsDB:
@@ -8,6 +9,12 @@ class DialsDB:
     database_changes = 0
 
     def __init__(self, database_file='vudials.db', init_if_missing=False):
+        # Serial I/O is offloaded to a worker thread, and provision/reload
+        # persist dial info to the DB from that thread. Allow cross-thread use
+        # of the connection and serialize every access with a reentrant lock so
+        # concurrent statements from the IOLoop thread and the serial worker
+        # can't collide on the same connection.
+        self._lock = RLock()
         # database_path = os.path.join(os.path.expanduser('~'), 'KaranovicResearch', 'vudials')
         database_path = os.path.join(os.path.dirname(__file__))
 
@@ -20,7 +27,7 @@ class DialsDB:
         if not os.path.exists(self.database_file) and not init_if_missing:
             raise SystemError("Database file does not exist!")
 
-        self.connection = sqlite3.connect(self.database_file)
+        self.connection = sqlite3.connect(self.database_file, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
 
         if init_if_missing:
@@ -30,11 +37,11 @@ class DialsDB:
     def fetch_dial_info_or_create_default(self, dial_uid, dial_name='Not set'):
 
         # check if dial exists
-        res = self._fetch_one_query(f"SELECT * FROM dials WHERE `dial_uid`='{dial_uid}' LIMIT 1")
+        res = self._fetch_one_query("SELECT * FROM dials WHERE `dial_uid`=? LIMIT 1", (dial_uid,))
         if not res:
-            self._insert(f"INSERT INTO dials (`dial_uid`, `dial_name`) VALUES ('{dial_uid}', '{dial_name}')")
+            self._insert("INSERT INTO dials (`dial_uid`, `dial_name`) VALUES (?, ?)", (dial_uid, dial_name))
             logger.debug(f"Added dial `{dial_uid}` to dial list with friendly name `{dial_name}`")
-            res = self._fetch_one_query(f"SELECT * FROM dials WHERE `dial_uid`='{dial_uid}' LIMIT 1")
+            res = self._fetch_one_query("SELECT * FROM dials WHERE `dial_uid`=? LIMIT 1", (dial_uid,))
 
         return res
 
@@ -42,7 +49,7 @@ class DialsDB:
         logger.debug(f"Updating `{dial_uid}` to `{cell}`='{value}'")
 
         logger.debug(f"Attempting to update `{dial_uid}` to `{cell}='{value}'")
-        self._insert(f"UPDATE dials SET `{cell}`='{value}' WHERE `dial_uid`='{dial_uid}'")
+        self._insert(f"UPDATE dials SET `{cell}`=? WHERE `dial_uid`=?", (value, dial_uid))
 
         return self._more_than_one_changed()
 
@@ -53,12 +60,13 @@ class DialsDB:
 
         logger.debug(f"Updating `{dial_uid}` to `{values_dict}'")
 
-        fields = ', '.join( f"`{key}`='{value}'" for key, value in values_dict.items())
-        query = f"UPDATE `dials` SET {fields} WHERE `dial_uid`='{dial_uid}'"
+        fields = ', '.join(f"`{key}`=?" for key in values_dict.keys())
+        query = f"UPDATE `dials` SET {fields} WHERE `dial_uid`=?"
+        params = list(values_dict.values()) + [dial_uid]
         logger.debug(query)
 
         logger.debug(f"Attempting to update `{dial_uid}` to `{values_dict}'")
-        self._insert(query)
+        self._insert(query, params)
 
         return self._more_than_one_changed()
 
@@ -87,7 +95,7 @@ class DialsDB:
     def api_key_get_dial_access(self, key_id):
         dials = []
 
-        key_access = self._fetch_all(f"SELECT `dial_uid` FROM `dial_access` WHERE `key_id`='{key_id}'")
+        key_access = self._fetch_all("SELECT `dial_uid` FROM `dial_access` WHERE `key_id`=?", (key_id,))
 
         if not key_access:
             return dials
@@ -106,18 +114,18 @@ class DialsDB:
             return False
 
         # Wipe any existing entries that key has
-        self._query(f"DELETE FROM `dial_access` WHERE `key_id`={key_id}")
+        self._query("DELETE FROM `dial_access` WHERE `key_id`=?", (key_id,))
 
         # Add dial access
         for dial in dials:
-            self._insert(f"INSERT OR IGNORE INTO `dial_access` (dial_uid, key_id) VALUES ('{dial}', '{key_id}')")
+            self._insert("INSERT OR IGNORE INTO `dial_access` (dial_uid, key_id) VALUES (?, ?)", (dial, key_id))
 
         return self._more_than_one_changed()
 
 
     # Set master key to defined value (used to drive master key from .yaml file into sqlite database)
     def api_update_master(self, new_key):
-        self._query(f"INSERT OR REPLACE INTO api_keys (key_id, key_name, key_uid, key_level) VALUES ('1', 'MASTER_KEY', '{new_key}', 99)")
+        self._insert("INSERT OR REPLACE INTO api_keys (key_id, key_name, key_uid, key_level) VALUES ('1', 'MASTER_KEY', ?, 99)", (new_key,))
         return self._more_than_one_changed()
 
     def api_key_generate(self, key_name='Not set', level=1):
@@ -141,81 +149,91 @@ class DialsDB:
         # Find key in DB
         key_id = self.api_key_get_id(key_uid)
 
-        query_update_level = ""
-        if level is not None:
-            query_update_level = f", `key_level`='{level}'"
-
         # Rename key
         if key_name is not None:
-            self._query(f"UPDATE `api_keys` SET `key_name`='{key_name}' {query_update_level} WHERE `key_id`='{key_id}'")
+            if level is not None:
+                self._query("UPDATE `api_keys` SET `key_name`=?, `key_level`=? WHERE `key_id`=?", (key_name, level, key_id))
+            else:
+                self._query("UPDATE `api_keys` SET `key_name`=? WHERE `key_id`=?", (key_name, key_id))
             return self._more_than_one_changed()
         return False
 
     def api_key_delete(self, key_uid):
         # Make sure we are not deleting master key!
-        res = self._fetch_one_query(f"SELECT `key_id` FROM `api_keys` WHERE `key_uid`='{key_uid}' AND `key_level` < '99' LIMIT 1")
-        key_id = res['key_id']
-        if not key_id:
+        res = self._fetch_one_query("SELECT `key_id` FROM `api_keys` WHERE `key_uid`=? AND `key_level` < '99' LIMIT 1", (key_uid,))
+        if not res:
             return False
+        key_id = res['key_id']
 
         # Delete the KEY
-        query = f"DELETE FROM `api_keys` WHERE `key_id`='{key_id}'"
+        query = "DELETE FROM `api_keys` WHERE `key_id`=?"
         logger.debug(query)
-        self._query(query)
+        self._query(query, (key_id,))
         self._commit()
         if self._more_than_one_changed():
-            # Delete dial access
-            self._query(f"DELETE FROM `dial_access` WHERE `key_id`='{key_id}'")
+            # Delete dial access. This may affect zero rows (a key without any
+            # granted dials), so its change count must NOT decide the return
+            # value -- the key itself was already deleted successfully.
+            self._query("DELETE FROM `dial_access` WHERE `key_id`=?", (key_id,))
             self._commit()
+            self._more_than_one_changed()  # keep the change counter in sync
 
-            return self._more_than_one_changed()
+            return True
 
         return False
 
 
     # -- Internal
     def _insert_dict(self, table_name, dict_data):
-        cursor = self.connection.cursor()
-        attrib_names = ", ".join(dict_data.keys())
-        attrib_values = ", ".join("?" * len(dict_data.keys()))
-        sql = f"INSERT INTO {table_name} ({attrib_names}) VALUES ({attrib_values})"
-        cursor.execute(sql, list(dict_data.values()))
-        self._commit()
+        with self._lock:
+            cursor = self.connection.cursor()
+            attrib_names = ", ".join(dict_data.keys())
+            attrib_values = ", ".join("?" * len(dict_data.keys()))
+            sql = f"INSERT INTO {table_name} ({attrib_names}) VALUES ({attrib_values})"
+            cursor.execute(sql, list(dict_data.values()))
+            self._commit()
 
     def _commit(self):
-        self.connection.commit()
+        with self._lock:
+            self.connection.commit()
 
-    def _insert(self, query):
-        self._query(query)
-        self.connection.commit()
+    def _insert(self, query, params=()):
+        with self._lock:
+            self._query(query, params)
+            self.connection.commit()
 
-    def _query(self, query):
-        cursor = self.connection.cursor()
-        cursor.execute(query)
+    def _query(self, query, params=()):
+        with self._lock:
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
 
+    # `table`, `cell` and `where` are always internal column/table names, never
+    # user-supplied, so it's safe to interpolate them; only `where_cmp` (the
+    # value being compared) needs to go through a bound parameter.
     def _fetch_one(self, table, cell, where, where_cmp, limit=1):
-        cursor = self.connection.cursor()
-        query = f"SELECT {cell} FROM {table} WHERE {where} ='{where_cmp}' LIMIT {limit}"
+        query = f"SELECT {cell} FROM {table} WHERE {where} =? LIMIT {limit}"
         logger.debug(query)
-        cursor.execute(query)
-        return cursor.fetchone()
+        return self._fetch_one_query(query, (where_cmp,))
 
-    def _fetch_one_query(self, query):
-        cursor = self.connection.cursor()
-        cursor.execute(query)
-        return cursor.fetchone()
+    def _fetch_one_query(self, query, params=()):
+        with self._lock:
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
+            return cursor.fetchone()
 
-    def _fetch_all(self, query):
-        cursor = self.connection.cursor()
-        cursor.execute(query)
-        return cursor.fetchall()
+    def _fetch_all(self, query, params=()):
+        with self._lock:
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
+            return cursor.fetchall()
 
 
     def _more_than_one_changed(self):
-        if self.connection.total_changes > self.database_changes:
-            self.database_changes = self.connection.total_changes
-            return True
-        return False
+        with self._lock:
+            if self.connection.total_changes > self.database_changes:
+                self.database_changes = self.connection.total_changes
+                return True
+            return False
 
     def _init_database(self):
         # Create DIALS table

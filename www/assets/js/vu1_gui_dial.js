@@ -61,6 +61,16 @@ $("#dial-reload-info").on( "click", function() {
     gui_reload_dial_info();
 });
 
+$("#dial-reset-device").on( "click", function() {
+    if (!confirm("Reset this dial? Its cached backlight state is cleared and "
+                 + "its value, colour and image are re-pushed."))
+    {
+        return;
+    }
+    $("#dial-reset-container").html('<span class="status status-red"><span class="status-dot status-dot-animated"></span>Resetting...</span>');
+    gui_reset_dial();
+});
+
 
 
 function gui_set_dial_easing(period, step)
@@ -77,6 +87,19 @@ function gui_set_backlight_easing(period, step)
     const dial_uid = $.urlParam('uid');
     $.get( '/api/v0/dial/' + dial_uid  + '/easing/backlight?step='+ step +'&period='+ period +'&key='+ API_MASTER_KEY )
     .done(function( data ) {
+        window.location.reload(true);
+    });
+}
+
+function gui_reset_dial()
+{
+    const dial_uid = $.urlParam('uid');
+    $.get( '/api/v0/dial/' + dial_uid  + '/reset?key='+ API_MASTER_KEY )
+    .done(function( data ) {
+        window.location.reload(true);
+    })
+    .fail(function() {
+        alert('Failed to reset dial. Request error.');
         window.location.reload(true);
     });
 }

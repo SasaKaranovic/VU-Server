@@ -20,10 +20,10 @@ jobs:
       App_Packages_Archive: VU1_Server
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
-        python-version: '3.9'
+        python-version: '3.12'
         update-environment: true
         cache: 'pip' # caching pip dependencies
 
@@ -89,7 +89,7 @@ jobs:
 
     ## Upload installer
     #- name: Upload build artifact
-    #  uses: actions/upload-artifact@v3
+    #  uses: actions/upload-artifact@v6
     #  with:
     #    name: ${{ env.App_Packages_Archive }}_installer.exe
     #    path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe

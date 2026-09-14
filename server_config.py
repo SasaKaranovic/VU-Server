@@ -7,47 +7,26 @@ from vu_notifications import show_error_msg, show_warning_msg
 import database as db
 
 class ServerConfig:
-    config_path = None
-    server = None
-    hardware = None
+    # Shared, read-only defaults. Callers must copy these before storing them on
+    # an instance so per-instance mutation never leaks back into the defaults.
     server_default = {'hostname': 'localhost', 'port': 3000, 'communication_timeout': 10, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
     hardware_default = {'port': None }
-    dials = {}
-    api_keys = {}
-    database = None
 
     def __init__(self, config_file='config.yaml'):
-        self.config_path =  os.path.join(os.path.dirname(__file__), config_file)
+        # Per-instance state (previously class attributes, which shared a single
+        # mutable dict across every ServerConfig instance).
+        self.config_path = os.path.join(os.path.dirname(__file__), config_file)
+        self.server = None
+        self.hardware = None
+        self.dials = {}
+        self.api_keys = {}
+        self.database = None
+
         logger.info(f"VU1 config yaml file: {self.config_path}")
         self.database = db.DialsDB(init_if_missing=True)
         self._load_config()     # Load configuration from .yaml file
         self._load_API_keys()   # Load API keys from `api_keys` section
         self.debug_config()
-
-    # Save current configuration to .yaml file
-    def _save_config(self):
-        config = None
-        yaml = YAML(typ='safe', pure=True)
-
-        if os.path.exists(self.config_path):
-            with open(self.config_path, 'r', encoding="utf-8") as file:
-                config = yaml.load(file) # pylint: disable=assignment-from-no-return
-
-        if not config:
-            config = {}
-
-        # Update server config
-        if not config.get('server'):
-            config['server'] = self.server
-            config['port'] = self.server['port']
-            config['communication_timeout'] = 5000
-        else:
-            config['server']['hostname'] = self.server['hostname']
-            config['server']['port'] = self.server['port']
-            config['server']['communication_timeout'] = self.server['communication_timeout']
-
-        with open(self.config_path, 'w', encoding="utf-8") as file:
-            yaml.dump(config, file)
 
     # Read .yaml config file
     def _load_config(self):
@@ -75,8 +54,8 @@ class ServerConfig:
                              "Must have valid entries for 'server' and 'hardware' configuration!\r\n"\
                              "Using defaul values for this session.")
             cfg = {}
-            cfg['server'] = self.server_default
-            cfg['hardware'] = self.hardware_default
+            cfg['server'] = dict(self.server_default)
+            cfg['hardware'] = dict(self.hardware_default)
 
         elif not isinstance(cfg['server'], dict):
             show_warning_msg("Invalid server config", f"Config file '{self.config_path}' \r\n"\
@@ -110,19 +89,19 @@ class ServerConfig:
             return False
 
         # Load yaml values
-        self.server = cfg.get('server', self.server_default)
-        self.hardware = cfg.get('hardware', self.hardware_default)
+        self.server = cfg.get('server', dict(self.server_default))
+        self.hardware = cfg.get('hardware', dict(self.hardware_default))
 
         return True
 
     def _force_default_config(self):
-        self.server = self.server_default
-        self.hardware = self.hardware_default
+        self.server = dict(self.server_default)
+        self.hardware = dict(self.hardware_default)
 
     def _create_default_config(self):
         logger.info("Using default config values")
-        self.server = self.server_default
-        self.hardware = self.hardware_default
+        self.server = dict(self.server_default)
+        self.hardware = dict(self.hardware_default)
 
     # Load API keys from config file
     def _load_API_keys(self):

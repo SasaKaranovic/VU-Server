@@ -1,9 +1,8 @@
-tornado
-numpy
-pillow
-requests
-argparse
-pyyaml
-ruamel.yaml
-pyserial
-pyinstaller
+tornado==6.5.7
+numpy==2.5.1
+pillow==12.3.0
+requests==2.34.2
+pyyaml==6.0.3
+ruamel.yaml==0.19.1
+pyserial==3.5
+pyinstaller==6.21.0

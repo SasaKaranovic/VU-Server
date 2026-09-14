@@ -232,3 +232,6 @@ cython_debug/
 
 *.pid.lock
 upload/*
+
+data/
+vudials.db

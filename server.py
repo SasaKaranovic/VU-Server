@@ -5,6 +5,8 @@ import argparse
 import zlib
 import time
 import re
+import functools
+from concurrent.futures import ThreadPoolExecutor
 from mimetypes import guess_type
 from dials.base_logger import logger, set_logger_level
 from tornado.web import Application, RequestHandler, Finish, StaticFileHandler
@@ -32,10 +34,21 @@ def pid_lock(service_name, create=True):
             os.remove(pid_file)
 
 class BaseHandler(RequestHandler):
-    def initialize(self, handler, config):
+    def initialize(self, handler, config, executor=None):
         self.handler = handler # pylint: disable=attribute-defined-outside-init
         self.config = config # pylint: disable=attribute-defined-outside-init
+        # Dedicated single-worker executor for blocking serial I/O. Handlers
+        # await work on it so the Tornado IOLoop never blocks on the serial bus.
+        # None (e.g. in unit tests) falls back to the default thread pool, which
+        # is fine for correctness -- only production needs the serialization
+        # guarantee of a single worker.
+        self.executor = executor # pylint: disable=attribute-defined-outside-init
         self.upload_path = os.path.join(os.path.dirname(__file__), 'upload') # pylint: disable=attribute-defined-outside-init
+
+    async def run_blocking(self, func, *args, **kwargs):
+        # Run a blocking (serial) call off the IOLoop thread and await its result.
+        loop = IOLoop.current()
+        return await loop.run_in_executor(self.executor, functools.partial(func, *args, **kwargs))
 
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
@@ -69,6 +82,22 @@ class BaseHandler(RequestHandler):
             return False
         return True
 
+    def require_dial_access(self, dial_uid):
+        # Gate for every per-dial endpoint: the key must both exist *and* be
+        # granted access to this specific dial. Skipping the second check let a
+        # key scoped to one dial command/read any other dial by UID -- the
+        # `dial_access` grant was previously only honoured by the list endpoint.
+        # Sends the appropriate error response itself; returns False on denial.
+        if not self.is_valid_api_key():
+            self.send_response(status='fail', message='Unauthorized', status_code=401)
+            return False
+        if not self.api_key_has_access_to_dial(gaugeUID=dial_uid):
+            self.send_response(status='fail',
+                               message='API key does not have access to this dial.',
+                               status_code=403)
+            return False
+        return True
+
     def valid_admin_key(self):
         admin_key = self.get_argument('admin_key', None)
         if not admin_key:
@@ -81,6 +110,15 @@ class BaseHandler(RequestHandler):
             self.send_response(status='fail', message='Invalid or missing API key.', status_code=401)
             return False
         return True
+
+    @staticmethod
+    def _arg_is_true(value):
+        # Query arguments come back as strings (or the supplied default), never
+        # as the bool singleton `True`, so a plain `value is True` check can
+        # never match a request like `?force=true`.
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
     def get_file_crc(self, filepath):
         if not os.path.exists(filepath):
@@ -100,6 +138,11 @@ class BaseHandler(RequestHandler):
 class Device_Status_Handler(BaseHandler):
     def get(self, dial_uid):
         logger.debug(f"Request:STATUS - Device:{dial_uid}")
+
+        # Validate API key and per-dial access
+        if not self.require_dial_access(dial_uid):
+            return
+
         dial = self.handler.get_dial_info(dial_uid=dial_uid)
         if dial is not None:
             return self.send_response(status='ok', data=dial)
@@ -110,24 +153,24 @@ class Device_Set_Handler(BaseHandler):
         value = self.get_argument('value', 0)
         logger.debug(f"Request:SET - Device:{dial_uid} To:{value}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(dial_uid):
+            return
 
         if self.handler.dial_set_percent(dial_uid=dial_uid, value=value):
             return self.send_response(status='ok', message='Update queued')
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.')
 
 class Device_SetRaw_Handler(BaseHandler):
-    def get(self, dial_uid):
+    async def get(self, dial_uid):
         value = self.get_argument('value', 0)
         logger.debug(f"Request:SET_RAW - Device:{dial_uid} To:{value}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(dial_uid):
+            return
 
-        if self.handler.dial_set_raw(dial_uid=dial_uid, value=value):
+        if await self.run_blocking(self.handler.dial_set_raw, dial_uid=dial_uid, value=value):
             return self.send_response(status='ok', message='Dial RAW value updated', status_code=201)
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
@@ -140,9 +183,9 @@ class Device_Backlight_Handler(BaseHandler):
 
         logger.debug(f"Request:BACKLIGHT - Device:{dial_uid} To: (red:{red} green:{green} blue:{blue} white:{white})")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(dial_uid):
+            return
 
         if self.handler.dial_set_backlight(dial_uid=dial_uid, red=red, green=green, blue=blue, white=white):
             return self.send_response(status='ok', message='Update queued', status_code=201)
@@ -152,13 +195,13 @@ class Device_Set_Image(BaseHandler):
     def post(self, dial_uid):
         get_force = self.get_argument('force', False)
 
-        force_img_update = bool(get_force is True)
+        force_img_update = self._arg_is_true(get_force)
 
         logger.debug(f"Request:SET_IMAGE - Device:{dial_uid}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(dial_uid):
+            return
 
         # Store new image
         img_file = self.handle_image_upload(dial_uid)
@@ -215,6 +258,11 @@ class Dial_Get_Image(BaseHandler):
         self.set_header("Content-Type", "image/png")
 
         logger.debug("Request: GET_IMAGE")
+
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
+
         dial_image = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
 
         if os.path.exists(dial_image):
@@ -237,6 +285,10 @@ class Dial_Get_Image_CRC(BaseHandler):
     def get(self, gaugeUID):
         logger.debug("Request: GET_IMAGE_CRC")
 
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
+
         img_file = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
 
         crc = self.get_file_crc(img_file)
@@ -247,9 +299,6 @@ class Dial_Get_List(BaseHandler):
         logger.debug("Request: DEVICE_LIST")
 
         # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Missing API key!', status_code=403)
-
         if not self.is_valid_api_key():
             return self.send_response(status='fail', message='Unauthorized', status_code=401)
 
@@ -263,7 +312,7 @@ class Dial_Get_List(BaseHandler):
                             'uid' : uid,
                             'dial_name': dials[uid]['dial_name'],
                             'value': dials[uid]['value'],
-                            'backlight': dials[uid]['backlight'],
+                            'backlight': dict(dials[uid]['backlight']),
                             'image_file' : dials[uid]['image_file']
                         }
             # Remove unused keys
@@ -277,7 +326,7 @@ class Dial_Get_List(BaseHandler):
 
 
 class Dial_Provision(BaseHandler):
-    def get(self):
+    async def get(self):
 
         logger.debug("Request: PROVISION_NEW_DIALS")
 
@@ -285,19 +334,45 @@ class Dial_Provision(BaseHandler):
         if not self.valid_admin_key():
             return False
 
-        dials = self.handler.provision_dials()
+        dials = await self.run_blocking(self.handler.provision_dials)
         logger.debug(dials)
 
         return self.send_response(status='ok', data=dials)
+
+class Dial_Reset_All(BaseHandler):
+    async def get(self):
+
+        logger.debug("Request: RESET_ALL_DEVICES")
+
+        # Validate master key -- this is a bus-wide, disruptive action.
+        if not self.valid_admin_key():
+            return False
+
+        if await self.run_blocking(self.handler.reset_all_devices):
+            return self.send_response(status='ok', message='All devices reset.', status_code=200)
+        return self.send_response(status='fail', message='Failed to reset devices.', status_code=503)
+
+class Dial_Reset_Device(BaseHandler):
+    def get(self, gaugeUID):
+
+        logger.debug(f"Request: RESET_DEVICE - Device:{gaugeUID}")
+
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
+
+        if self.handler.reset_device(gaugeUID):
+            return self.send_response(status='ok', message='Device reset.', status_code=200)
+        return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
 class Dial_Set_Dial_Name(BaseHandler):
     def get(self, gaugeUID):
         new_name = self.get_argument('name', None)
         logger.debug(f"Request:SET_NAME - Device:{gaugeUID} To: friendly name={new_name}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
 
         if new_name is not None:
             # Dial name should be 3 or more characters
@@ -320,66 +395,86 @@ class Dial_Set_Dial_Name(BaseHandler):
         return self.send_response(status='fail', message='Device not present!', status_code=406)
 
 class Dial_Reload_Device_Info(BaseHandler):
-    def get(self, gaugeUID):
+    async def get(self, gaugeUID):
 
         logger.debug(f"Request:GET_INFO - Device:{gaugeUID}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
 
-        dial_info = self.handler.dial_reload_info_from_hardware(gaugeUID)
+        dial_info = await self.run_blocking(self.handler.dial_reload_info_from_hardware, gaugeUID)
         return self.send_response(status='ok', data=dial_info)
 
 class Dial_Set_Calibration(BaseHandler):
-    def get(self, gaugeUID):
+    async def get(self, gaugeUID):
         dac_calibration = self.get_argument('value', None)
         logger.debug(f"Request:SET_CALIBRATION - Device:{gaugeUID} To: value={dac_calibration}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
 
         if dac_calibration is not None:
-            self.handler.dial_set_calibration(dial_uid=gaugeUID, value=dac_calibration, fullScale=False)
+            await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False)
             return self.send_response(status='ok', message="Calibration value updated", status_code=201)
         return self.send_response(status='fail', message="Device not present", status_code=406)
 
 class Dial_Set_Easing_Dial(BaseHandler):
-    def get(self, gaugeUID):
+    async def get(self, gaugeUID):
         step = self.get_argument('step', None)
         period = self.get_argument('period', None)
         logger.debug(f"Request:SET_EASING_DIAL - Device:{gaugeUID} Step:{step} Period:{period}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
 
         if step is None and period is None:
             return self.send_response(status='fail', message="Please provide at least one of required parameters (`step` or `period`)", status_code=400)
 
-        if self.handler.dial_set_easing_dial(dial_uid=gaugeUID, step=step, period=period):
-            values_dict = { 'easing_dial_step': int(step), 'easing_dial_period': int(period) }
+        try:
+            step = None if step is None else int(step)
+            period = None if period is None else int(period)
+        except (TypeError, ValueError):
+            return self.send_response(status='fail', message="`step` and `period` must be integers.", status_code=400)
+
+        if await self.run_blocking(self.handler.dial_set_easing_dial, dial_uid=gaugeUID, step=step, period=period):
+            values_dict = {}
+            if step is not None:
+                values_dict['easing_dial_step'] = step
+            if period is not None:
+                values_dict['easing_dial_period'] = period
             self.config.update_dial_db_cell_with_dict(gaugeUID, values_dict)
             self.handler.dial_reload_info_from_database(gaugeUID)
             return self.send_response(status='ok')
         return self.send_response(status='fail', message="Device not present", status_code=406)
 
 class Dial_Set_Easing_Backlight(BaseHandler):
-    def get(self, gaugeUID):
+    async def get(self, gaugeUID):
         step = self.get_argument('step', None)
         period = self.get_argument('period', None)
         logger.debug(f"Request:SET_EASING_BACKLIGHT - Device:{gaugeUID} Step:{step} Period:{period}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
 
         if step is None and period is None:
             return self.send_response(status='fail', message="Please provide at least one of required parameters (`step` or `period`)", status_code=400)
 
-        if self.handler.dial_set_easing_backlight(dial_uid=gaugeUID, step=step, period=period):
-            values_dict = { 'easing_backlight_step': step, 'easing_backlight_period': period }
+        try:
+            step = None if step is None else int(step)
+            period = None if period is None else int(period)
+        except (TypeError, ValueError):
+            return self.send_response(status='fail', message="`step` and `period` must be integers.", status_code=400)
+
+        if await self.run_blocking(self.handler.dial_set_easing_backlight, dial_uid=gaugeUID, step=step, period=period):
+            values_dict = {}
+            if step is not None:
+                values_dict['easing_backlight_step'] = step
+            if period is not None:
+                values_dict['easing_backlight_period'] = period
             self.config.update_dial_db_cell_with_dict(gaugeUID, values_dict)
             self.handler.dial_reload_info_from_database(gaugeUID)
             return self.send_response(status='ok')
@@ -389,9 +484,9 @@ class Dial_Get_Easing_Config(BaseHandler):
     def get(self, gaugeUID):
         logger.debug(f"Request:GET_EASING_CONFIG - Device:{gaugeUID}")
 
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        # Validate API key and per-dial access
+        if not self.require_dial_access(gaugeUID):
+            return
 
         # TODO: Implement in dial handler
         return self.send_response(status='ok', message="not supported yet")
@@ -460,17 +555,22 @@ class Admin_Keys_Update(BaseHandler):
         if dial_list is None and key is None:
             return self.send_response(status='fail', message='Key, Key name and Dial list are all empty. Aborting.', status_code=400)
 
-        # Update key
+        updated = False
+
+        # Update key name
         if name is not None:
             if not self.config.update_api_key(key_uid=key, key_name=name):
                 return self.send_response(status='fail', message='Failed to update key!')
+            updated = True
 
         # Update dial access
         if dial_list:
             dial_list = dial_list.split(';')
             if self.config.api_key_add_dial_access(key, dial_list):
-                return self.send_response(status='ok', message='Key updated!')
+                updated = True
 
+        if updated:
+            return self.send_response(status='ok', message='Key updated!')
         return self.send_response(status='fail', message='Failed to update key!')
 
 class Admin_Keys_Remove(BaseHandler):
@@ -514,7 +614,7 @@ class FileHandler(RequestHandler):
             self.write(resp)
             raise Finish()
         content_type, _ = guess_type(file_location)
-        self.add_header('Content-Type', content_type)
+        self.set_header('Content-Type', content_type)
         with open(file_location, encoding="utf-8") as source_file:
             self.write(source_file.read())
 
@@ -547,14 +647,24 @@ class Dial_API_Service(Application):
         self.dial_driver = DialSerialDriver(self.serialPort)
         self.dial_handler = ServerDialHandler(self.dial_driver, self.config)
 
-        # If we don't see any dials, try looking/provisioning some
-        if len(self.dial_handler.dials) <= 1:
-            logger.info("No additional dials found. Searching the bus for new ones...")
+        # All blocking serial I/O (request handlers *and* the periodic updater)
+        # runs on this single dedicated worker thread. One worker keeps serial
+        # access serialized -- so the periodic loop and an offloaded handler
+        # never talk to the bus at once -- while keeping the Tornado IOLoop free
+        # to serve other requests instead of freezing on the serial port.
+        self.serial_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='serial')
+
+        # If we don't see any dials, try looking/provisioning some. Only do this
+        # when the bus is genuinely empty -- the old `<= 1` check re-ran the
+        # provisioning scan on every startup whenever a single dial was present.
+        if len(self.dial_handler.dials) == 0:
+            logger.info("No dials found. Searching the bus for new ones...")
             self.dial_handler.provision_dials(num_attempts=3)
 
-        handlers_config = { "handler":self.dial_handler, "config":self.config }
+        handlers_config = { "handler":self.dial_handler, "config":self.config, "executor":self.serial_executor }
         self.handlers = [
             (r"/api/v0/dial/provision", Dial_Provision, handlers_config),
+            (r"/api/v0/dial/reset_all", Dial_Reset_All, handlers_config),
             (r"/api/v0/dial/list", Dial_Get_List, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/status", Device_Status_Handler, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/set", Device_Set_Handler, handlers_config),
@@ -565,6 +675,7 @@ class Dial_API_Service(Application):
             (r"/api/v0/dial/([0-9A-F]*?)/backlight", Device_Backlight_Handler, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/name", Dial_Set_Dial_Name, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/reload", Dial_Reload_Device_Info, handlers_config),
+            (r"/api/v0/dial/([0-9A-F]*?)/reset", Dial_Reset_Device, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/easing/dial", Dial_Set_Easing_Dial, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/easing/backlight", Dial_Set_Easing_Backlight, handlers_config),
@@ -586,11 +697,13 @@ class Dial_API_Service(Application):
 
     def signal_handler(self, signal, frame):
         pid_lock('server', False)
-        self.shut_down_dials()
-        IOLoop.current().add_callback_from_signal(self.shutdown_server)
         print('\r\nYou pressed Ctrl+C!')
         show_info_msg("CTRL+C", "CTRL+C pressed.\r\nVU Server app will exit now.")  # Remove if becomes annoying
-        sys.exit(0)
+
+        def do_shutdown():
+            self.shut_down_dials()
+            self.shutdown_server()
+        IOLoop.current().add_callback_from_signal(do_shutdown)
 
     def shut_down_dials(self):
         print("Shutting down dials...")
@@ -608,16 +721,11 @@ class Dial_API_Service(Application):
         logger.info('Stopping API server')
         logger.info('Will shutdown in 3 seconds ...')
         io_loop = IOLoop.instance()
-        deadline = time.time() + 3
 
         def stop_loop():
-            now = time.time()
-            if now < deadline and (io_loop._callbacks or io_loop._timeouts):
-                io_loop.add_timeout(now + 1, stop_loop)
-            else:
-                io_loop.stop()
-                logger.info('Shutdown')
-        stop_loop()
+            io_loop.stop()
+            logger.info('Shutdown')
+        io_loop.call_later(3, stop_loop)
 
     def run_forever(self):
         logger.info("Karanovic Research Dials - Starting API server")
@@ -626,10 +734,18 @@ class Dial_API_Service(Application):
         # Port from config.yaml or default 5340
         server_config = self.config.get_server_config()
         port = server_config.get('port', 5340)
+        # Bind to the configured hostname. This used to be ignored (bare
+        # `app.listen(port)` binds every interface), so `hostname: localhost`
+        # in config.yaml silently exposed the API -- with a well-known default
+        # master key and CORS `*` -- to the whole LAN. An empty hostname is the
+        # explicit opt-in for all interfaces.
+        hostname = server_config.get('hostname', 'localhost')
+        if hostname is None:
+            hostname = ''
         master_key = server_config.get('master_key', None)
         dial_update_period = server_config.get('dial_update_period', 1000)
-        logger.info(f"VU1 API server is listening on http://localhost:{port}")
-        app.listen(port)
+        logger.info(f"VU1 API server is listening on http://{hostname or '0.0.0.0'}:{port}")
+        app.listen(port, address=hostname)
 
         if master_key is not None:
             logger.info("Master Key is present in config.yaml (or using default)")
@@ -641,7 +757,14 @@ class Dial_API_Service(Application):
             logger.error("Check your 'config.yaml' or add it manually under 'server' section.")
             sys.exit(0)
 
-        pc = PeriodicCallback(self.dial_handler.periodic_dial_update, dial_update_period)
+        # Run the periodic dial update on the serial worker thread so its
+        # blocking serial writes (value/backlight/image, incl. chunked image
+        # sends with their inter-chunk sleeps) never freeze the IOLoop.
+        async def periodic_dial_update():
+            await IOLoop.current().run_in_executor(self.serial_executor,
+                                                   self.dial_handler.periodic_dial_update)
+
+        pc = PeriodicCallback(periodic_dial_update, dial_update_period)
         pc.start()
 
         IOLoop.instance().start()

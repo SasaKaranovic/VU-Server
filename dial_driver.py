@@ -13,11 +13,24 @@ from serial_driver import SerialHardware
 
 
 class DialSerialDriver(SerialHardware):
-    dials = {}
-    hub_info = {}
+    # A backlight write is ACKed by an immediately-returned status code (it is
+    # not gated on the easing animation), so it only needs a short read window.
+    # Keeping this well below the default 5s stops a silent dial from blocking
+    # the caller for the full timeout on every retry.
+    BACKLIGHT_READ_TIMEOUT = 0.5
+
+    # A percent-set is ACKed just as promptly (measured 15-19ms on the wire, and
+    # not gated on the easing animation either), so it gets the same short read
+    # window rather than the 5s default.
+    DIAL_SET_READ_TIMEOUT = 0.5
 
     def __init__(self, port_info):
         super(DialSerialDriver, self).__init__(port_info, timeout=2)
+
+        # Per-instance state (previously class attributes shared across every
+        # DialSerialDriver instance).
+        self.dials = {}
+        self.hub_info = {}
 
         self.commands = hub_commands()
         self.hub_config = hub_config()
@@ -28,13 +41,13 @@ class DialSerialDriver(SerialHardware):
         max_size = math.floor( (self.hub_config.GAUGE_COMM_MAX_RX_DATA_LEN - (self.hub_config.GAUGE_COMM_HEADER_LEN*2) )/2)
         return max_size
 
-    def _sendCommand(self, cmd, dataType, dataLen=0, data=None):
+    def _sendCommand(self, cmd, dataType, dataLen=0, data=None, ignore_response=False, read_timeout=None):
         if dataLen == 0:
             payload = ">{:02X}{:02X}{:04X}".format(cmd, dataType, dataLen)
         elif dataLen == 1:
             if data < 256:
                 payload = ">{:02X}{:02X}{:04X}{:02X}".format(cmd, dataType, dataLen, data)
-            elif data >= 256:
+            else:
                 payload = ">{:02X}{:02X}{:04X}{:04X}".format(cmd, dataType, dataLen+1, data)
         elif dataLen > 1:
             formattedData = ""
@@ -47,11 +60,15 @@ class DialSerialDriver(SerialHardware):
                     raise ValueError('Unsupported data type ({})'.format(type(elem)))
 
             payload = ">{:02X}{:02X}{:04X}{}".format(cmd, dataType, int(len(formattedData)/2), formattedData)
+        else:
+            raise ValueError(f"Unexpected dataLen={dataLen!r}")
 
         logger.debug(f"CMD:{cmd} - Type:{dataType} - Len:{dataLen}".format(payload))
         logger.debug("Sending `{}`".format(payload))
-        response = self.serial_transaction(payload)
-        return self._parseResponse(response)
+        response = self.serial_transaction(payload, ignore_response=ignore_response, read_timeout=read_timeout)
+        if ignore_response:
+            return True
+        return self._parseResponse(response, expected_cmd=cmd)
 
     def _send_cmd_with_uin32(self, dialID, cmd, value, dt=None):
         if dt is None:
@@ -59,8 +76,15 @@ class DialSerialDriver(SerialHardware):
         data = [dialID, ((value>>24)&0xFF), ((value>>16)&0xFF), ((value>>8)&0xFF), (value&0xFF)]
         return self._sendCommand(cmd, dt, len(data), data)
 
-    def _parseResponse(self, response):
-        for line in response:
+    def _parseResponse(self, response, expected_cmd=None):
+        """Pull this command's reply out of the received lines.
+
+        The hub echoes the command byte back in its reply, so when expected_cmd
+        is given, a reply carrying a different command is a reply to something
+        else and must be skipped -- accepting it silently returns another
+        command's status (or payload) as though it were ours.
+        """
+        for idx, line in enumerate(response):
             logger.debug(line)
             if line.startswith('<'):
                 cmd = line[1:3]
@@ -69,15 +93,44 @@ class DialSerialDriver(SerialHardware):
                 data = line[9:]
                 ret = {'cmd':cmd, 'dataType':dataType, 'dataLen':dataLen, 'data':data}
 
-                if dataType == self.data_type.COMM_DATA_STATUS_CODE:
+                if expected_cmd is not None and not self._cmd_matches(cmd, expected_cmd):
+                    logger.error(f"_parseResponse: ignoring reply for command 0x{cmd} "
+                                 f"while awaiting 0x{expected_cmd:02X}: {line!r}")
+                    continue
+
+                logger.debug(f"_parseResponse: matched line {idx+1}/{len(response)}: {line!r}")
+                # `dataType` is a two-char hex *string* off the wire; the
+                # protocol constant is an int. Comparing them directly never
+                # matched, so status-code replies were returned as their raw
+                # (truthy) payload and hub errors passed as success.
+                if self._is_status_reply(dataType):
                     return self._checkStatus(ret['data'])
                 return ret['data']
         return False
 
+    def _is_status_reply(self, dataType):
+        try:
+            return int(dataType, 16) == self.data_type.COMM_DATA_STATUS_CODE
+        except ValueError:
+            logger.error(f"_is_status_reply: malformed data-type byte {dataType!r}")
+            return False
+
+    def _cmd_matches(self, cmd, expected_cmd):
+        try:
+            return int(cmd, 16) == expected_cmd
+        except ValueError:
+            logger.error(f"_cmd_matches: malformed command byte {cmd!r}")
+            return False
+
     def _checkStatus(self, statusCode):
-        if int(statusCode, 16) == self.status_codes.GAUGE_STATUS_OK:
+        try:
+            code = int(statusCode, 16)
+        except ValueError:
+            logger.error(f"_checkStatus: malformed status payload {statusCode!r}")
+            return False
+        if code == self.status_codes.GAUGE_STATUS_OK:
             return True
-        logger.error("Error code: {}".format(int(statusCode, 16)))
+        logger.error("Error code: {}".format(code))
         return False
 
     def _convert_hex_str_to_str(self, hex_string):
@@ -133,10 +186,13 @@ class DialSerialDriver(SerialHardware):
                 if int(elem, 16) == 1:
                     onlineDials.append(key)
 
+            # Rebuild the map from scratch so dials that dropped off the bus
+            # since the last scan don't linger as phantom entries.
+            rescanned = {}
             for dialIndex in onlineDials:
                 deviceUID = self.dial_get_uid(dialIndex)                # Read dial UID
                 # Friendly name will be added from config
-                self.dials[dialIndex] = {
+                rescanned[dialIndex] = {
                                             'index': str(dialIndex),
                                             'uid': deviceUID,
                                             'dial_name': 'Not set',
@@ -153,6 +209,7 @@ class DialSerialDriver(SerialHardware):
                                             'hw_version': '?',
                                             'protocol_version': '?',
                                         }
+            self.dials = rescanned
 
         dialList = []
         for key, val in self.dials.items():
@@ -201,6 +258,10 @@ class DialSerialDriver(SerialHardware):
 
         if sendCMD:
             self.dial_single_set_percent(dialID, int(value))
+        elif value is not None and self.dials.get(int(dialID)) is not None:
+            # Keep the cached value in sync even when we don't send a command
+            # (e.g. batched via dial_multiple_set_percent).
+            self.dials[int(dialID)]['value'] = int(value)
         return True
 
     def _findDial(self, UID):
@@ -213,10 +274,11 @@ class DialSerialDriver(SerialHardware):
         if isinstance(device, str):
             if len(device) <= 3:
                 return int(device)
-            device = self._findDial(device)
+            uid = device
+            device = self._findDial(uid)
 
             if device is None:
-                logger.error(f"Can not find dial '{device}'")
+                logger.error(f"Can not find dial '{uid}'")
             return device
 
         elif isinstance(device, int):
@@ -303,6 +365,10 @@ class DialSerialDriver(SerialHardware):
         ret = self._sendCommand(self.commands.COMM_CMD_GET_EASING_CONFIG, self.data_type.COMM_DATA_SINGLE_VALUE, 1, dialID)
         ret = self._convert_hex_str_to_byte_array(ret)
 
+        if len(ret) < 16:
+            logger.error(f"dial_easing_get_config: expected 16 bytes, got {len(ret)} for dial {dialID}")
+            return easing
+
         easing['dial_step']         = int(ret[0]) << 24 | int(ret[1]) << 16 | int(ret[2]) << 8 | int(ret[3])
         easing['dial_period']       = int(ret[4]) << 24 | int(ret[5]) << 16 | int(ret[6]) << 8 | int(ret[7])
         easing['backlight_step']    = int(ret[8]) << 24 | int(ret[9]) << 16 | int(ret[10]) << 8 | int(ret[11])
@@ -322,7 +388,13 @@ class DialSerialDriver(SerialHardware):
         if self.dials.get(int(dialID), False):
             self.dials[int(dialID)]['value'] = value
         data = [dialID, (value&0xFF)]
-        return self._sendCommand(self.commands.COMM_CMD_SET_DIAL_PERC_SINGLE, self.data_type.COMM_DATA_KEY_VALUE_PAIR, len(data), data)
+        # The hub DOES ACK a percent-set (`>0304...` -> `<0305000400000000`).
+        # Sending this with ignore_response=True left that ACK sitting in the RX
+        # buffer, where the next command on the shared port consumed it as its
+        # own reply -- a backlight write would return the percent-set's status
+        # instead of its own. Read the ACK here, bounded by a short timeout so a
+        # silent dial still can't stall the serial worker.
+        return self._sendCommand(self.commands.COMM_CMD_SET_DIAL_PERC_SINGLE, self.data_type.COMM_DATA_KEY_VALUE_PAIR, len(data), data, read_timeout=self.DIAL_SET_READ_TIMEOUT)
 
     def dial_multiple_set_percent(self, devices, values):
         logger.debug(f"@dial_multiple_set_percent(devices={devices}, values={values})")
@@ -332,7 +404,7 @@ class DialSerialDriver(SerialHardware):
 
         data = []
         for i in range(len(devices)):
-            self.set_dial(devices[i], values[i], sendCMD=False)
+            self.set_dial(dialID=devices[i], value=values[i], sendCMD=False)
             data.append(devices[i])
             data.append(values[i])
 
@@ -406,7 +478,7 @@ class DialSerialDriver(SerialHardware):
         return buff
 
     def binary_to_image_data(self, image):
-        img = Image.open(Image.open(BytesIO(image)))
+        img = Image.open(BytesIO(image))
         img = img.convert("L")
 
         imgData = np.asarray(img)
@@ -471,22 +543,27 @@ class DialSerialDriver(SerialHardware):
     def get_dial_rx_buffer_size(self, device):
         logger.debug(f"@get_dial_rx_buffer_size(device={device})")
         rxLen = self._sendCommand(self.commands.COMM_CMD_RX_BUFFER_SIZE, self.data_type.COMM_DATA_SINGLE_VALUE, 1, int(device))
-        rxLen = int(rxLen[:8], 16)
-        return rxLen
+        if not isinstance(rxLen, str):
+            logger.error(f"get_dial_rx_buffer_size: unexpected response {rxLen!r} for device {device}")
+            return None
+        return int(rxLen[:8], 16)
 
     def dial_display_show(self, device):
         logger.debug(f"@dial_display_show(device={device})")
         return self._sendCommand(self.commands.COMM_CMD_DISPLAY_SHOW_IMG, self.data_type.COMM_DATA_SINGLE_VALUE, 1, int(device))
 
     def dial_set_backlight(self, device, red, green, blue, white):
-        logger.debug(f"@dial_set_backlight(device={device}, red={red}, green={green}, green={green}, blue={blue}, white={white})")
+        logger.debug(f"@dial_set_backlight(device={device}, red={red}, green={green}, blue={blue}, white={white})")
         device = self._verify_device(device)
+        if device is None or device not in self.dials:
+            logger.error(f"dial_set_backlight: unknown device {device!r}")
+            return False
         self.dials[device]['rgbw'][0] = red
         self.dials[device]['rgbw'][1] = green
         self.dials[device]['rgbw'][2] = blue
         self.dials[device]['rgbw'][3] = white
         data = [device, red, green, blue, white]
-        return self._sendCommand(self.commands.COMM_CMD_SET_RGB_BACKLIGHT, self.data_type.COMM_DATA_MULTIPLE_VALUE, len(data), data)
+        return self._sendCommand(self.commands.COMM_CMD_SET_RGB_BACKLIGHT, self.data_type.COMM_DATA_MULTIPLE_VALUE, len(data), data, read_timeout=self.BACKLIGHT_READ_TIMEOUT)
 
     def dial_send_keep_comm_alive(self, device):
         pass
