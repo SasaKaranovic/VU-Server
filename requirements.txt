@@ -1,4 +1,4 @@
-tornado==6.5.7
+tornado==6.5.10
 numpy==2.5.1
 pillow==12.3.0
 requests==2.34.2
