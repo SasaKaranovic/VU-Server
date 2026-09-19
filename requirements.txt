@@ -5,4 +5,4 @@ requests==2.34.2
 pyyaml==6.0.3
 ruamel.yaml==0.19.1
 pyserial==3.5
-pyinstaller==6.21.0
+pyinstaller==6.22.3
