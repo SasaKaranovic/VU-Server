@@ -51,11 +51,7 @@ class BaseHandler(RequestHandler):
     def initialize(self, handler, config, executor=None):
         self.handler = handler # pylint: disable=attribute-defined-outside-init
         self.config = config # pylint: disable=attribute-defined-outside-init
-        # Dedicated single-worker executor for blocking serial I/O. Handlers
-        # await work on it so the Tornado IOLoop never blocks on the serial bus.
-        # None (e.g. in unit tests) falls back to the default thread pool, which
-        # is fine for correctness -- only production needs the serialization
-        # guarantee of a single worker.
+        # Single-worker executor that serializes blocking serial I/O; None uses the default pool.
         self.executor = executor # pylint: disable=attribute-defined-outside-init
 
     async def run_blocking(self, func, *args, **kwargs):
@@ -68,7 +64,6 @@ class BaseHandler(RequestHandler):
         self.set_header('Access-Control-Allow-Methods', 'POST, GET')
         self.set_header('Content-Type', 'application/json')
 
-    # Helper function to send response
     def send_response(self, status, message='', data=None, status_code=200):
         resp = {'status': status, 'message': message, 'data': data}
         self.set_status(status_code)
@@ -264,7 +259,7 @@ class Dial_Set_Dial_Name(BaseHandler):
         logger.debug(f"Request:SET_NAME - Device:{gaugeUID} To: friendly name={new_name}")
 
         if new_name is None:
-            return self.send_response(status='fail', message='Missing `name` parameter.', status_code=400)
+            return self.send_response(status='fail', message='Missing `name` parameter.', status_code=406)
         if len(new_name) < 3:
             return self.send_response(status='fail', message='Dial name should be at least 3 characters long.', status_code=400)
         if len(new_name) > 30:
@@ -284,7 +279,8 @@ class Dial_Reload_Device_Info(BaseHandler):
         logger.debug(f"Request:GET_INFO - Device:{gaugeUID}")
 
         info = await self.run_blocking(self.handler.dial_read_info_from_hardware, gaugeUID)
-        return self.send_response(status='ok', data=self.handler.dial_store_info(gaugeUID, info))
+        dial = self.handler.dial_store_info(gaugeUID, info)
+        return self.send_response(status='ok', data=dial and {field: dial[field] for field in STATUS_FIELDS})
 
 class Dial_Set_Calibration(BaseHandler):
     auth = 'dial'
@@ -294,7 +290,7 @@ class Dial_Set_Calibration(BaseHandler):
         logger.debug(f"Request:SET_CALIBRATION - Device:{gaugeUID} To: value={dac_calibration}")
 
         if dac_calibration is None:
-            return self.send_response(status='fail', message='Missing `value` parameter.', status_code=400)
+            return self.send_response(status='fail', message='Missing `value` parameter.', status_code=406)
         if await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False):
             return self.send_response(status='ok', message="Calibration value updated", status_code=201)
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
@@ -322,6 +318,13 @@ class Dial_Set_Easing(BaseHandler):
         self.handler.dial_store_easing(gaugeUID, sent)
         return self.send_response(status='ok')
 
+class Dial_Get_Easing_Config(BaseHandler):
+    auth = 'dial'
+
+    def get(self, gaugeUID):
+        logger.debug(f"Request:GET_EASING_CONFIG - Device:{gaugeUID}")
+        return self.send_response(status='ok', message="not supported yet")
+
 # -- Keys --
 class Admin_Keys_List(BaseHandler):
     auth = 'admin'
@@ -335,7 +338,7 @@ class Admin_Keys_Create(BaseHandler):
 
     def post(self):
         logger.debug("Request:Admin_Keys_Create")
-        # `priviledges` is ignored; only the configured master key is admin.
+        # `priviledges` is ignored, so new keys are never admin.
         new_key = self.config.create_api_key(self.get_argument('name', 'Not set'))
         dial_access = self.get_argument('dials', None)
         if dial_access:
@@ -402,6 +405,7 @@ def make_routes(handlers_config):
         (r"/api/v0/dial/([0-9A-F]*?)/reset", Dial_Reset_Device, handlers_config),
         (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, handlers_config),
         (r"/api/v0/dial/([0-9A-F]*?)/easing/(dial|backlight)", Dial_Set_Easing, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/easing/get", Dial_Get_Easing_Config, handlers_config),
         (r"/api/v0/admin/keys/list", Admin_Keys_List, handlers_config),
         (r"/api/v0/admin/keys/create", Admin_Keys_Create, handlers_config),
         (r"/api/v0/admin/keys/remove", Admin_Keys_Remove, handlers_config),
@@ -418,8 +422,7 @@ class Dial_API_Service:
         os.makedirs(UPLOAD_DIR, exist_ok=True)
 
         # If config contains COM port, use it. Otherwise try to find it
-        hardware_config = self.config.get_hardware_config()
-        port = hardware_config.get('port', None)
+        port = self.config.get_hardware_config()['port']
         if port:
             self.serialPort = port
         else:
@@ -521,9 +524,11 @@ def main(cmd_args=None):
         exit_code = 1
     os._exit(exit_code)
 
-if __name__ == '__main__':
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description='Karanovic Research - VU Dials API service')
-    parser.add_argument('-l', '--logging', type=str.lower, choices=['debug', 'info'], default='info',
-                        help='Set logging level. Default is `info`')
-    args = parser.parse_args()
-    main(args)
+    # Any value other than `debug`, including '', means info.
+    parser.add_argument('-l', '--logging', type=str, default='info', help='Set logging level. Default is `info`')
+    return parser.parse_args(argv)
+
+if __name__ == '__main__':
+    main(parse_args())

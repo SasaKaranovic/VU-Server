@@ -9,6 +9,22 @@ from dials.base_logger import logger
 DEFAULT_READ_TIMEOUT = 5
 
 
+def find_port(predicate):
+    """@returns the first ListPortInfo from comports() matching `predicate`, or None."""
+    for port in comports():
+        logger.debug(f"{port.device}")
+        logger.debug(f"\tProduct: {port.product}")
+        logger.debug(f"\tDesc: {port.description}")
+        logger.debug(f"\tSN: {port.serial_number}")
+        logger.debug(f"\tVID:{port.vid} PID:{port.pid}")
+        logger.debug(f"\tLocation: {port.location}")
+        logger.debug(f"\tInterface: {port.interface}")
+        if predicate(port):
+            logger.debug(f"Using '{port.device}' as GaugeHub COM port")
+            return port
+    return None
+
+
 class SerialHardware:
     def __init__(self, port_info, timeout):
         """
@@ -18,7 +34,9 @@ class SerialHardware:
         self.lock = Lock()
 
         if isinstance(port_info, str):
-            port_info = self._find_port_by_name(port_info)
+            logger.debug(f"Searching for COM port `{port_info}`")
+            name = port_info
+            port_info = find_port(lambda p: p.device == name)
         if not isinstance(port_info, _lpc.ListPortInfo):
             raise TypeError("The port_info for {} must be of type {}".format(self.__class__, _lpc.ListPortInfo))
         self.port_info = port_info
@@ -34,22 +52,6 @@ class SerialHardware:
     def assert_open(self):
         if not self.port.is_open:
             raise _serial.SerialException("Serial port must be open. port: \"{}\" description \"{}\"".format(self.port_info.name, self.port_info.description))
-
-    def _find_port_by_name(self, port_info):
-        availablePorts = comports()
-        logger.debug(f"Searching for COM port `{port_info}`")
-        for port in availablePorts:
-            logger.debug(f"{port.device}")
-            logger.debug(f"\tProduct: {port.product}")
-            logger.debug(f"\tDesc: {port.description}")
-            logger.debug(f"\tSN: {port.serial_number}")
-            logger.debug(f"\tVID:{port.vid} PID:{port.pid}")
-            logger.debug(f"\tLocation: {port.location}")
-            logger.debug(f"\tInterface: {port.interface}")
-            if port.device == port_info:
-                logger.debug("Using '{}' as GaugeHub COM port".format(port.device))
-                return port
-        return None
 
     def read_until_response(self, timeout=DEFAULT_READ_TIMEOUT):
         """Read lines until one starts with '<' or the timeout passes; returns every line read."""

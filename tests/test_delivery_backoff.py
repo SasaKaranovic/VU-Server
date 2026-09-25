@@ -1,9 +1,9 @@
-"""A failed value or backlight write stays pending, backs off, and latches unresponsive after BACKLIGHT_MAX_FAILURES."""
+"""A failed value or backlight write stays pending, backs off, and latches unresponsive after DELIVERY_MAX_FAILURES."""
 import pytest
 
 from server_dial_handler import ServerDialHandler
 
-MAX_FAILURES = ServerDialHandler.BACKLIGHT_MAX_FAILURES
+MAX_FAILURES = ServerDialHandler.DELIVERY_MAX_FAILURES
 
 # Per kind: the handler setter, a request equal to the fixture's queued state, and a different one.
 REQUEST = {

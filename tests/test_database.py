@@ -20,7 +20,7 @@ def test_dial_update_cell_does_not_allow_sql_injection_via_value(db):
     # A value crafted to break out of the SET clause and neuter the WHERE
     # clause, so it updates every row instead of just the targeted dial.
     payload = "PWNED' WHERE '1'='1"
-    db.dial_update_cell(dial_uid='AAAAAAAAAAAA', cell='dial_name', value=payload)
+    db.dial_update_cell_with_dict('AAAAAAAAAAAA', {'dial_name': payload})
 
     dial_a = db.fetch_dial_info_or_create_default('AAAAAAAAAAAA')
     dial_b = db.fetch_dial_info_or_create_default('BBBBBBBBBBBB')
@@ -45,8 +45,8 @@ def test_dial_update_cell_with_dict_does_not_allow_sql_injection_via_value(db):
 
 
 def test_api_key_update_does_not_allow_sql_injection_via_key_name(db):
-    key_a = db.api_key_generate(key_name='Key A', level=1)
-    key_b = db.api_key_generate(key_name='Key B', level=1)
+    key_a = db.api_key_generate(key_name='Key A')
+    key_b = db.api_key_generate(key_name='Key B')
 
     payload = "PWNED' WHERE '1'='1"
     db.api_key_update(key_uid=key_a, key_name=payload)
@@ -63,7 +63,7 @@ def test_api_key_delete_returns_false_for_nonexistent_key(db):
 
 def test_api_key_delete_without_dial_access_reports_success(db):
     # A freshly generated key has no rows in `dial_access`.
-    key = db.api_key_generate(key_name='Temp key', level=1)
+    key = db.api_key_generate(key_name='Temp key')
     assert db.api_key_get_id(key) is not None
 
     assert db.api_key_delete(key) is True
@@ -71,7 +71,7 @@ def test_api_key_delete_without_dial_access_reports_success(db):
 
 
 def test_api_key_delete_with_dial_access_reports_success(db):
-    key = db.api_key_generate(key_name='Temp key', level=1)
+    key = db.api_key_generate(key_name='Temp key')
     db.api_key_add_dial_access(key, ['AAAAAAAAAAAA'])
 
     assert db.api_key_delete(key) is True
@@ -79,7 +79,7 @@ def test_api_key_delete_with_dial_access_reports_success(db):
 
 
 def test_api_key_delete_removes_dial_access(db):
-    key = db.api_key_generate(key_name='Temp key', level=1)
+    key = db.api_key_generate(key_name='Temp key')
     key_id = db.api_key_get_id(key)
     db.api_key_add_dial_access(key, ['AAAAAAAAAAAA', 'BBBBBBBBBBBB'])
 
@@ -103,7 +103,7 @@ def test_generated_api_keys_use_expected_alphabet_and_length(db):
 
 
 def test_api_key_update_is_committed(db):
-    key = db.api_key_generate(key_name='Old name', level=1)
+    key = db.api_key_generate(key_name='Old name')
     assert db.api_key_update(key, 'New name') is True
 
     # A new connection only sees committed rows.
@@ -125,13 +125,13 @@ def test_fetch_dial_info_keeps_existing_row(db):
 
 
 def test_dial_update_cell_reports_missing_dial(db):
-    assert db.dial_update_cell('NOSUCHDIAL', 'dial_name', 'x') is False
+    assert db.dial_update_cell_with_dict('NOSUCHDIAL', {'dial_name': 'x'}) is False
     db.fetch_dial_info_or_create_default('AAAAAAAAAAAA')
-    assert db.dial_update_cell('AAAAAAAAAAAA', 'dial_name', 'x') is True
+    assert db.dial_update_cell_with_dict('AAAAAAAAAAAA', {'dial_name': 'x'}) is True
 
 
 def test_api_key_add_dial_access_replaces_existing(db):
-    key = db.api_key_generate(key_name='Temp key', level=1)
+    key = db.api_key_generate(key_name='Temp key')
     db.api_key_add_dial_access(key, ['AAAAAAAAAAAA', 'BBBBBBBBBBBB'])
 
     assert db.api_key_add_dial_access(key, ['CCCCCCCCCCCC']) is True

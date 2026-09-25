@@ -1,10 +1,9 @@
 import time
 import textwrap
 from PIL import Image
-from serial.tools.list_ports import comports
 from dials.Comms_Hub_Server import hub_commands, hub_data_types, hub_status_codes
 from dials.base_logger import logger
-from serial_driver import SerialHardware, DEFAULT_READ_TIMEOUT
+from serial_driver import SerialHardware, DEFAULT_READ_TIMEOUT, find_port
 
 
 class DialSerialDriver(SerialHardware):
@@ -93,7 +92,7 @@ class DialSerialDriver(SerialHardware):
         """@returns {bus index: UID} for the dials found by the last rescan."""
         logger.debug(f"@get_dial_list(rescan={rescan})")
         if rescan:
-            resp = self.bus_rescan()
+            self.bus_rescan()
             resp = self._sendCommand(hub_commands.COMM_CMD_GET_DEVICES_MAP, hub_data_types.COMM_DATA_NONE)
             if not resp:
                 logger.error("Invalid response received from COMM_CMD_GET_DEVICES_MAP")
@@ -279,19 +278,7 @@ class DialSerialDriver(SerialHardware):
         logger.debug("@reset_all_devices")
         return self._sendCommand(hub_commands.COMM_CMD_RESET_ALL_DEVICES, hub_data_types.COMM_DATA_NONE)
 
-    @classmethod
-    def find_gauge_hub(cls):
-        availablePorts = comports()
+    @staticmethod
+    def find_gauge_hub():
         logger.debug("Searching for COM port with VID:1027 and PID:24597")
-        for port in availablePorts:
-            logger.debug(f"{port.device}")
-            logger.debug(f"\tProduct: {port.product}")
-            logger.debug(f"\tDesc: {port.description}")
-            logger.debug(f"\tSN: {port.serial_number}")
-            logger.debug(f"\tVID:{port.vid} PID:{port.pid}")
-            logger.debug(f"\tLocation: {port.location}")
-            logger.debug(f"\tInterface: {port.interface}")
-            if port.vid == 1027 and port.pid == 24597:
-                logger.debug("Using '{}' as GaugeHub COM port".format(port.description))
-                return port
-        return None
+        return find_port(lambda p: (p.vid, p.pid) == (1027, 24597))

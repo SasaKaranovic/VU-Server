@@ -26,6 +26,7 @@ from server import (
     Dial_Reset_Device,
     Dial_Set_Calibration,
     Dial_Set_Easing,
+    Dial_Get_Easing_Config,
 )
 
 ALLOWED = 'ABCDEF'
@@ -113,6 +114,7 @@ ENDPOINTS = [
     ('calibrate', 'GET', "/api/v0/dial/{uid}/calibrate", '&value=1'),
     ('easing_dial', 'GET', "/api/v0/dial/{uid}/easing/dial", '&step=1'),
     ('easing_backlight', 'GET', "/api/v0/dial/{uid}/easing/backlight", '&step=1'),
+    ('easing_get', 'GET', "/api/v0/dial/{uid}/easing/get", ''),
     ('image_set', 'POST', "/api/v0/dial/{uid}/image/set", ''),
 ]
 
@@ -135,6 +137,7 @@ class DialAccessControlTestCase(tornado.testing.AsyncHTTPTestCase):
             (r"/api/v0/dial/([0-9A-F]*?)/reset", Dial_Reset_Device, hc),
             (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, hc),
             (r"/api/v0/dial/([0-9A-F]*?)/easing/(dial|backlight)", Dial_Set_Easing, hc),
+            (r"/api/v0/dial/([0-9A-F]*?)/easing/get", Dial_Get_Easing_Config, hc),
         ])
 
     def _fetch(self, method, url):
@@ -183,17 +186,17 @@ class DialAccessControlTestCase(tornado.testing.AsyncHTTPTestCase):
         assert response.code == 403
         assert response.headers['Content-Type'].startswith('application/json')
 
-    def test_name_missing_is_400(self):
+    def test_name_missing_is_406(self):
         response = self.fetch(f"/api/v0/dial/{ALLOWED}/name?key=scopedkey")
-        assert response.code == 400
+        assert response.code == 406
 
     def test_name_with_invalid_characters_is_400(self):
         response = self.fetch(f"/api/v0/dial/{ALLOWED}/name?key=scopedkey&name=he%2Allo")
         assert response.code == 400
 
-    def test_calibrate_missing_value_is_400(self):
+    def test_calibrate_missing_value_is_406(self):
         response = self.fetch(f"/api/v0/dial/{ALLOWED}/calibrate?key=scopedkey")
-        assert response.code == 400
+        assert response.code == 406
         assert self.fake_handler.calls == []
 
     def test_calibrate_failure_is_503(self):

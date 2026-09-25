@@ -8,11 +8,8 @@ API_KEY_LENGTH = 16
 
 
 class DialsDB:
-    def __init__(self, database_file='vudials.db', init_if_missing=True):
-        """Open the database next to this module, creating missing tables.
-
-        @param init_if_missing: ignored.
-        """
+    def __init__(self, database_file='vudials.db'):
+        """Open the database next to this module, creating missing tables."""
         self.database_file = os.path.join(os.path.dirname(__file__), database_file)
         logger.info(f"VU1 Database file: {self.database_file}")
 
@@ -26,9 +23,6 @@ class DialsDB:
         if self._exec("INSERT OR IGNORE INTO dials (`dial_uid`, `dial_name`) VALUES (?, ?)", (dial_uid, dial_name)):
             logger.debug(f"Added dial `{dial_uid}` to dial list with friendly name `{dial_name}`")
         return self._fetch("SELECT * FROM dials WHERE `dial_uid`=? LIMIT 1", (dial_uid,), one=True)
-
-    def dial_update_cell(self, dial_uid, cell, value):
-        return self.dial_update_cell_with_dict(dial_uid, {cell: value})
 
     def dial_update_cell_with_dict(self, dial_uid, values_dict):
         """Update columns of one dial. Keys must be trusted column names.
@@ -49,16 +43,24 @@ class DialsDB:
         res = self._fetch("SELECT `key_id` FROM `api_keys` WHERE `key_uid`=? LIMIT 1", (key,), one=True)
         return res['key_id'] if res else None
 
+    def api_key_is_admin(self, key):
+        """@returns: True if `key` is stored with admin level (99 or higher)."""
+        res = self._fetch("SELECT 1 FROM `api_keys` WHERE `key_uid`=? AND `key_level` >= 99 LIMIT 1", (key,), one=True)
+        return res is not None
+
     def api_key_list(self):
-        return {
-            key['key_uid']: {
-                'key_name': key['key_name'],
-                'key_uid': key['key_uid'],
-                'priviledges': int(key['key_level']),
-                'dials': self.api_key_get_dial_access(key['key_id']),
-            }
-            for key in self._fetch("SELECT * FROM api_keys")
-        }
+        keys = {}
+        rows = self._fetch("SELECT k.*, a.dial_uid FROM api_keys k LEFT JOIN dial_access a USING(key_id) ORDER BY k.key_id, a.id")
+        for row in rows:
+            key = keys.setdefault(row['key_uid'], {
+                'key_name': row['key_name'],
+                'key_uid': row['key_uid'],
+                'priviledges': int(row['key_level']),
+                'dials': [],
+            })
+            if row['dial_uid'] is not None:
+                key['dials'].append(row['dial_uid'])
+        return keys
 
     def api_key_get_dial_access(self, key_id):
         rows = self._fetch("SELECT `dial_uid` FROM `dial_access` WHERE `key_id`=?", (key_id,))
@@ -81,14 +83,14 @@ class DialsDB:
         """Store the config.yaml master key as key_id 1."""
         return self._exec("INSERT OR REPLACE INTO api_keys (key_id, key_name, key_uid, key_level) VALUES ('1', 'MASTER_KEY', ?, 99)", (new_key,)) > 0
 
-    def api_key_generate(self, key_name='Not set', level=1):
+    def api_key_generate(self, key_name='Not set'):
         # key_uid is UNIQUE, so a colliding key fails the insert and is redrawn.
         # Any other integrity error is re-raised so it cannot loop forever.
         while True:
             generated_key = self.generate_api_key_str()
             try:
-                self._exec("INSERT INTO api_keys (`key_uid`, `key_name`, `key_level`) VALUES (?, ?, ?)",
-                           (generated_key, key_name, level))
+                self._exec("INSERT INTO api_keys (`key_uid`, `key_name`, `key_level`) VALUES (?, ?, 1)",
+                           (generated_key, key_name))
                 return generated_key
             except sqlite3.IntegrityError:
                 if self.api_key_get_id(generated_key) is None:

@@ -162,3 +162,15 @@ def test_provision_dials_returns_the_rescan_without_touching_records(monkeypatch
 
     assert handler.provision_dials(num_attempts=1) == {0: 'AAA'}
     assert handler.dials == {}
+
+
+def test_calibrate_and_set_raw_report_driver_result(make_handler):
+    driver = types.SimpleNamespace(dial_calibrate=lambda *_: False, dial_single_set_raw=lambda *_: False)
+    handler = make_handler(driver)
+
+    assert handler.dial_set_calibration('AAA', 5) is False
+    assert handler.dial_set_raw('AAA', 5) is False
+
+    driver.dial_calibrate = driver.dial_single_set_raw = lambda *_: True
+    assert handler.dial_set_calibration('AAA', 5) is True
+    assert handler.dial_set_raw('AAA', 5) is True

@@ -1,6 +1,5 @@
 import os
 from time import time, sleep
-from math import trunc
 from dials.base_logger import logger
 
 # Where Device_Set_Image stores per-dial images (`img_<uid>`) and where the
@@ -47,13 +46,13 @@ class ServerDialHandler:
     that read the bus return what they read for an IOLoop-side method to store.
     """
     # Retry-backoff for value and backlight writes. A dial that stops ACKing is
-    # retried with exponential backoff; after BACKLIGHT_MAX_FAILURES consecutive
+    # retried with exponential backoff; after DELIVERY_MAX_FAILURES consecutive
     # failures it is marked unresponsive and left alone until it re-appears on a
     # bus rescan or a new value/colour is requested. This keeps one dead dial
     # from spamming the log and blocking the serial bus on every periodic tick.
-    BACKLIGHT_MAX_FAILURES = 5
-    BACKLIGHT_BACKOFF_BASE = 1.0   # seconds
-    BACKLIGHT_BACKOFF_MAX = 30.0   # seconds
+    DELIVERY_MAX_FAILURES = 5
+    DELIVERY_BACKOFF_BASE = 1.0   # seconds
+    DELIVERY_BACKOFF_MAX = 30.0   # seconds
 
     def __init__(self, dial_driver, server_config):
         self.dial_driver = dial_driver
@@ -79,7 +78,7 @@ class ServerDialHandler:
     def _convert_to_int(self, value):
         try:
             if not isinstance(value, int):
-                value = trunc(int(float(value)))
+                value = int(float(value))
         except Exception as e:
             logger.error(e)
             logger.error(f"Failed to convert value `{value}` to int. Defaulting to 0")
@@ -199,14 +198,14 @@ class ServerDialHandler:
     def _note_delivery_failure(self, dial, kind, now):
         fail_count = dial[f'{kind}_fail_count'] + 1
         dial[f'{kind}_fail_count'] = fail_count
-        if fail_count >= self.BACKLIGHT_MAX_FAILURES:
+        if fail_count >= self.DELIVERY_MAX_FAILURES:
             dial[f'{kind}_unresponsive'] = True
             logger.error(f"Dial {dial['uid']} unresponsive after {fail_count} "
                          f"{kind} attempts; giving up until it re-appears "
                          f"or a new {kind} is requested.")
         else:
-            backoff = min(self.BACKLIGHT_BACKOFF_BASE * (2 ** (fail_count - 1)),
-                          self.BACKLIGHT_BACKOFF_MAX)
+            backoff = min(self.DELIVERY_BACKOFF_BASE * (2 ** (fail_count - 1)),
+                          self.DELIVERY_BACKOFF_MAX)
             dial[f'{kind}_retry_after'] = now + backoff
             logger.error(f"Failed to update {kind} for dial {dial['uid']}; "
                          f"retrying in {backoff:g}s (attempt {fail_count}).")
@@ -218,7 +217,7 @@ class ServerDialHandler:
         dial[f'{kind}_unresponsive'] = False
 
     def _periodic_update_dial_images(self):
-        for _, dial in self.dials.items():
+        for dial in self.dials.values():
             if dial['image_changed']:
                 logger.debug("Updating images")
                 self.dial_driver.update_display(device=dial['index'], imageFile=dial['image_file'])
@@ -237,14 +236,9 @@ class ServerDialHandler:
         return self.dial_driver.get_dial_list(True)
 
     def reset_all_devices(self):
-        """Ask the hub to reset every dial on the bus.
+        """Reset every dial on the bus and, if the hub confirms, re-arm each one.
 
-        A reset reboots each dial to its power-on defaults, so any cached
-        "already delivered" / unresponsive backlight state is now stale. On a
-        confirmed reset we re-arm each dial (value, backlight, image) and clear
-        the backoff/unresponsive latch so the periodic loop pushes the desired
-        state to the freshly-rebooted hardware. On failure we touch nothing --
-        the hardware never reset, so the cached state is still accurate.
+        @returns False, leaving the records untouched, if the hub reports failure
         """
         logger.info("Resetting all devices on the bus")
         if not self.dial_driver.reset_all_devices():
@@ -257,14 +251,9 @@ class ServerDialHandler:
         return True
 
     def reset_device(self, dial_uid):
-        """Software-reset a single dial.
+        """Re-arm one dial so the periodic loop re-sends its state. The hub has no per-dial reset.
 
-        The hub serial protocol has no per-dial hardware power-cycle (only a
-        bus-wide reset), so this clears the target dial's cached "already
-        delivered" / unresponsive backlight state and re-arms its value,
-        backlight and image so the periodic loop re-pushes them. This recovers
-        a single dial whose backlight got stuck in a latched/backoff state
-        without disturbing the rest of the bus.
+        @returns False if the dial is not on the bus
         """
         dial = self._get_dial(dial_uid)
         if dial is None:
@@ -275,8 +264,7 @@ class ServerDialHandler:
         return True
 
     def _rearm_dial(self, dial):
-        """Clear a dial's backlight backoff/unresponsive latch and mark its
-        value, backlight and image dirty so the periodic loop re-pushes them."""
+        """Clear a dial's value and backlight backoff and mark its value, backlight and image for re-sending."""
         dial['value_changed'] = True
         dial['backlight_changed'] = True
         dial['image_changed'] = True
@@ -296,23 +284,19 @@ class ServerDialHandler:
         self._queue(dial, 'value', max(0, min(self._convert_to_int(value), 100)))
         return True
 
-    # Debug function, mainly used for dial offset/calibration
     def dial_set_raw(self, dial_uid, value):
+        """@returns True if the dial is on the bus and the hub accepted the raw value."""
         dial = self._get_dial(dial_uid)
         if dial is None:
             return False
+        return bool(self.dial_driver.dial_single_set_raw(dial['index'], self._convert_to_int(value)))
 
-        self.dial_driver.dial_single_set_raw(dial['index'], self._convert_to_int(value))
-        return True
-
-    # Debug function, mainly used for dial offset/calibration
     def dial_set_calibration(self, dial_uid, value, fullScale=False):
+        """@returns True if the dial is on the bus and the hub accepted the calibration."""
         dial = self._get_dial(dial_uid)
         if dial is None:
             return False
-
-        self.dial_driver.dial_calibrate(dial['index'], self._convert_to_int(value), fullScale)
-        return True
+        return bool(self.dial_driver.dial_calibrate(dial['index'], self._convert_to_int(value), fullScale))
 
     def dial_send_easing(self, dial_uid, target, step=None, period=None):
         """Send the easing for `target`, 'dial' (needle) or 'backlight'. Pass the result to dial_store_easing.

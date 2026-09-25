@@ -73,7 +73,13 @@ class EasingTestCase(tornado.testing.AsyncHTTPTestCase):
         assert response.code == 406
         assert self.fake_handler.stored == []
 
-    def test_unknown_easing_target_is_json_404(self):
+    def test_easing_get_is_not_supported(self):
         response, body = self._get("easing/get?key=testkey")
+        assert response.code == 200
+        assert body['message'] == 'not supported yet'
+        assert self.fake_handler.easing_calls == []
+
+    def test_unknown_easing_target_is_json_404(self):
+        response, body = self._get("easing/other?key=testkey")
         assert response.code == 404
         assert body['status'] == 'fail'

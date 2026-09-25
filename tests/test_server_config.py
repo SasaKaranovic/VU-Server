@@ -40,9 +40,29 @@ def test_invalid_file_uses_defaults(make_config):
     assert config.hardware == server_config.HARDWARE_DEFAULTS
 
 
-def test_empty_master_key_is_rejected(make_config):
-    with pytest.raises(ValueError):
-        make_config("server:\n  master_key:\n")
+@pytest.mark.parametrize('value', ['', "''"])
+def test_empty_master_key_falls_back_to_default(make_config, value):
+    config = make_config(f"server:\n  master_key: {value}\n")
+
+    default = server_config.SERVER_DEFAULTS['master_key']
+    assert config.server['master_key'] == default
+    assert config.validate_admin_key(default)
+    assert not config.validate_admin_key('')
+
+
+def test_legacy_admin_level_key_stays_admin(tmp_path, make_config):
+    legacy = DialsDB(database_file=str(tmp_path / "vudials.db"))
+    legacy.api_update_master('oldmaster')
+    legacy.connection.execute("INSERT INTO api_keys (key_name, key_uid, key_level) VALUES ('old admin', 'legacykey', 99)")
+    legacy.connection.commit()
+    legacy.connection.close()
+
+    config = make_config("server:\n  master_key: abc\n")
+
+    assert config.validate_admin_key('legacykey')
+    assert not config.validate_admin_key('oldmaster')
+    assert config.api_key_has_access_to_dial('legacykey', 'AAA')
+    assert config.list_keys()['legacykey']['priviledges'] == 99
 
 
 def test_only_configured_master_key_is_admin(make_config):

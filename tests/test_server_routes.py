@@ -70,3 +70,9 @@ class RoutesTestCase(tornado.testing.AsyncHTTPTestCase):
 
     def test_unknown_static_path_is_404(self):
         assert self.fetch("/missing.html").code == 404
+
+
+@pytest.mark.parametrize('value', ['', 'DEBUG', 'warning'])
+def test_logging_flag_accepts_any_level(value):
+    """The add-on passes '' when its option lookup fails; that must start at info, not exit."""
+    assert server.parse_args(['--logging', value]).logging == value

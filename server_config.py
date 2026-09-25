@@ -1,4 +1,3 @@
-# pylint: disable=E1101
 import hmac
 import os
 from ruamel.yaml import YAML
@@ -14,10 +13,9 @@ class ServerConfig:
         self.config_path = os.path.join(os.path.dirname(__file__), config_file)
         self.server = None
         self.hardware = None
-        self.database = None
 
         logger.info(f"VU1 config yaml file: {self.config_path}")
-        self.database = db.DialsDB(init_if_missing=True)
+        self.database = db.DialsDB()
         self._load_config()
         # key_id 1 always holds the current master key, so a rotated key stops working.
         self.database.api_update_master(self.server['master_key'])
@@ -46,7 +44,9 @@ class ServerConfig:
         if self.server['hostname'] is None:
             self.server['hostname'] = ''
         if self.server['master_key'] is None or str(self.server['master_key']) == '':
-            raise ValueError(f"Config file '{self.config_path}' has an empty `server.master_key`.")
+            notify('warning', "Empty master key", f"Config file '{self.config_path}' has an empty `server.master_key`.\r\n"\
+                   "Using the default master key for this session.")
+            self.server['master_key'] = SERVER_DEFAULTS['master_key']
         self.server['master_key'] = str(self.server['master_key'])
 
     def _merge_section(self, cfg, name, defaults):
@@ -101,16 +101,18 @@ class ServerConfig:
         return self.database.api_key_add_dial_access(key, dials)
 
     def validate_admin_key(self, key):
-        """@returns: True if `key` is the configured master key."""
+        """@returns: True if `key` is the configured master key or a stored admin-level key."""
         if not isinstance(key, str):
             return False
-        return hmac.compare_digest(key.encode(), self.server['master_key'].encode())
+        # Existing databases can hold level-99 keys, which the API can no longer create; they stay admin.
+        return (hmac.compare_digest(key.encode(), self.server['master_key'].encode())
+                or self.database.api_key_is_admin(key))
 
     def is_valid_api_key(self, key):
         return key is not None and self.database.api_key_get_id(key) is not None
 
     def api_key_has_access_to_dial(self, key, dial):
-        """@returns: True if `key` is the master key or has been granted `dial`."""
+        """@returns: True if `key` is an admin key or has been granted `dial`."""
         if self.validate_admin_key(key):
             return True
         key_id = self.database.api_key_get_id(key) if key is not None else None

@@ -9,6 +9,7 @@ import tornado.web
 
 from database import DialsDB
 from server import (
+    STATUS_FIELDS,
     Device_SetRaw_Handler,
     Dial_Set_Calibration,
     Dial_Reload_Device_Info,
@@ -22,7 +23,7 @@ def test_database_rejects_use_from_another_thread(tmp_path):
 
     with ThreadPoolExecutor(max_workers=1) as ex:
         with pytest.raises(Exception, match="same thread"):
-            ex.submit(db.api_key_generate, 'worker', 1).result()
+            ex.submit(db.api_key_generate, 'worker').result()
 
 
 class FakeDialHandler:
@@ -49,7 +50,7 @@ class FakeDialHandler:
 
     def dial_store_info(self, gaugeUID, info):
         self._record('dial_store_info', gaugeUID)
-        return {'uid': gaugeUID, **info}
+        return {**dict.fromkeys(STATUS_FIELDS), 'uid': gaugeUID, 'value_fail_count': 0, **info}
 
     def provision_dials(self):
         self._record('provision_dials')
@@ -114,7 +115,7 @@ class AsyncHandlerOffloadTestCase(tornado.testing.AsyncHTTPTestCase):
         response = self.fetch("/api/v0/dial/ABCDEF/reload?key=testkey")
         body = json.loads(response.body)
         assert response.code == 200
-        assert body['data'] == {'uid': 'ABCDEF', 'fw_version': '1.0'}
+        assert body['data'] == {**dict.fromkeys(STATUS_FIELDS), 'uid': 'ABCDEF', 'fw_version': '1.0'}
         assert self.fake_handler.calls == [
             ('dial_read_info_from_hardware', 'ABCDEF', False),
             ('dial_store_info', 'ABCDEF', True),
