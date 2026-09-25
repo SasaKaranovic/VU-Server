@@ -1,7 +1,6 @@
+// Home view: dial table, dial and key counts, provisioning and reset all.
 
-// When page is loaded
 $(function() {
-    // Handler for .ready() called.
     gui_update_dial_ui();
     gui_update_api_ui();
 
@@ -16,9 +15,9 @@ $("#btn-reset-all-dials").on( "click", function() {
     gui_reset_all_dials();
 } );
 
-function gui_update_dial_ui()
+async function gui_update_dial_ui()
 {
-    const dials = vu1_get_dial_list(false);
+    const dials = await vu1_get_dial_list();
 
     $.each( dials, function( key, val ) {
         $('#table_dials').append('<tr>\
@@ -37,9 +36,9 @@ function gui_update_dial_ui()
     $('#card-dial-count').text(dials.length + ' Online')
 }
 
-function gui_update_api_ui()
+async function gui_update_api_ui()
 {
-    const api_keys = vu1_get_api_keys();
+    const api_keys = await vu1_get_api_keys();
     $('#card-api-count').text(Object.keys(api_keys).length + ' API keys')
 }
 

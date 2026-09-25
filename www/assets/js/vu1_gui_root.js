@@ -1,125 +1,82 @@
+// Web UI shell: routes ?page= to a view and holds helpers the views share.
+
+// Must match server.master_key in config.yaml, or every Web UI request is rejected.
 const API_MASTER_KEY = 'cTpAWYuRpA2zx75Yh961Cg';
+const urlParams = new URLSearchParams(window.location.search);
+const PAGES = ['dial', 'api_keys', 'key_settings'];
 
-
-$.urlParam = function(name){
-    var results = new RegExp('[\?&]' + name + '=([^&#]*)').exec(window.location.href);
-    if (results==null) {
-       return null;
-    }
-    return decodeURI(results[1]) || 0;
-}
-
-// When page is loaded
 $(function () {
+    // make_version.py stamps the version into footer.html, so it stays a separate view.
+    $("#pagefooter").load("views/footer.html");
 
-    // Handle dynamic includes
-    var includes = $('[data-include]')
-    $.each(includes, function () {
-        var file = 'views/' + $(this).data('include') + '.html'
-        $(this).load(file)
-    })
-
-    // Check requested page
-    if($.urlParam('page') == 'dial')
-    {
-        $("#content").load("views/dial.html");
-    }
-    else if($.urlParam('page') == 'api_keys')
-    {
-        $("#content").load("views/api_keys.html");
-    }
-    else if($.urlParam('page') == 'key_settings')
-    {
-        $("#content").load("views/key_settings.html");
-    }
-    else
-    {
-        $("#content").load("views/start.html");
-    }
-
-})
+    const page = urlParams.get('page');
+    $("#content").load("views/" + (PAGES.includes(page) ? page : 'start') + ".html");
+});
 
 
-function create_toast(toast_title, toast_message)
+/** Create tooltips and popovers for elements added after Tabler's own init. */
+function initBsWidgets()
 {
-    var toast = '\
-                    <div class="toast show" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="false" data-bs-toggle="toast">\
-                    <div class="toast-header">\
-                    <strong class="me-auto">'+ toast_title +'</strong>\
-                    <button type="button" class="ms-2 btn-close" data-bs-dismiss="toast" aria-label="Close"></button>\
-                    </div>\
-                    <div class="toast-body">\
-                    '+ toast_message +'\
-                    </div>\
-                    </div>';
-    $("#content").append(toast);
+    const widgets = {tooltip: bootstrap.Tooltip, popover: bootstrap.Popover};
+    for (const [toggle, Widget] of Object.entries(widgets))
+    {
+        document.querySelectorAll('[data-bs-toggle="' + toggle + '"]').forEach(function (el) {
+            Widget.getOrCreateInstance(el, {
+                delay: {show: 50, hide: 50},
+                html: el.getAttribute('data-bs-html') === 'true',
+                placement: el.getAttribute('data-bs-placement') ?? 'auto',
+            });
+        });
+    }
 }
 
 
-function triggerTooltipGen()
+/** Fill #modal-dials-list with one checkbox per dial and wire the select all and none buttons. */
+async function gui_render_dial_picker()
 {
-    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-    tooltipTriggerList.map(function (tooltipTriggerEl) {
-      var _ref, _tooltipTriggerEl$get;
-      var options = {
-        delay: {
-          show: 50,
-          hide: 50
-        },
-        html: (_ref = tooltipTriggerEl.getAttribute("data-bs-html") === "true") !== null && _ref !== void 0 ? _ref : false,
-        placement: (_tooltipTriggerEl$get = tooltipTriggerEl.getAttribute('data-bs-placement')) !== null && _tooltipTriggerEl$get !== void 0 ? _tooltipTriggerEl$get : 'auto'
-      };
-      return new $.fn['tooltip'].Constructor(tooltipTriggerEl, options);
+    const dials = await vu1_get_dial_list();
+
+    $('#modal-dials-list').text("");
+    $.each(dials, function (key, val) {
+        const dial_name = (val['dial_name'] == 'Not set') ? val['uid'] : val['dial_name'];
+        $('#modal-dials-list').append('\
+            <label class="form-selectgroup-item">\
+              <input type="checkbox" name="modal-dial-checkbox" value="'+ val['uid'] +'" class="form-selectgroup-input" />\
+              <span class="form-selectgroup-label">'+ dial_name +'</span>\
+            </label>\
+        ');
     });
+
+    $("#modal-select-all").click(function () { gui_select_all_dials(true); });
+    $("#modal-deselect-all").click(function () { gui_select_all_dials(false); });
+}
+
+function gui_select_all_dials(checked)
+{
+    $('#modal-dials-list input:checkbox').prop('checked', checked);
 }
 
 
-function triggerPopoverGen()
+/**
+ * Validate a key form and flag its first invalid field.
+ * @param {string} name_input selector of the key name input
+ * @returns {{name: string, dials: string}|null} the name and ";"-joined dial UIDs, or null when invalid.
+ */
+function gui_read_key_form(name_input)
 {
-    var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
-    popoverTriggerList.map(function (popoverTriggerEl) {
-      var _ref, _popoverTriggerEl$get;
-      var options = {
-        delay: {
-          show: 50,
-          hide: 50
-        },
-        html: (_ref = popoverTriggerEl.getAttribute('data-bs-html') === "true") !== null && _ref !== void 0 ? _ref : false,
-        placement: (_popoverTriggerEl$get = popoverTriggerEl.getAttribute('data-bs-placement')) !== null && _popoverTriggerEl$get !== void 0 ? _popoverTriggerEl$get : 'auto'
-      };
-      return new $.fn['popover'].Constructor(popoverTriggerEl, options);
-    });
-}
+    const name = $(name_input).val();
+    $(name_input).toggleClass('is-invalid', name.length === 0);
+    if (name.length === 0)
+    {
+        return null;
+    }
 
-function triggerModalGen()
-{
-    // console.log("triggerModalGen");
+    const dials = $('#modal-dials-list input:checkbox:checked').map(function () { return this.value; }).get();
+    $('#modal-select-header').toggleClass('alert alert-warning', dials.length < 1);
+    if (dials.length < 1)
+    {
+        return null;
+    }
 
-    // $('*[data-bs-toggle="modal"]').on('click', function(event) {
-    //     console.log('Click!');
-    //     console.log(this);
-    // });
-
-    // EventHandler.on(document, EVENT_CLICK_DATA_API$2, SELECTOR_DATA_TOGGLE$2, function (event) {
-    //   const target = SelectorEngine.getElementFromSelector(this);
-    //   if (['A', 'AREA'].includes(this.tagName)) {
-    //     event.preventDefault();
-    //   }
-    //   EventHandler.one(target, EVENT_SHOW$4, showEvent => {
-    //     if (showEvent.defaultPrevented) {
-    //       return;
-    //     }
-    //     EventHandler.one(target, EVENT_HIDDEN$4, () => {
-    //       if (isVisible(this)) {
-    //         this.focus();
-    //       }
-    //     });
-    //   });
-    //   const alreadyOpen = SelectorEngine.findOne(OPEN_SELECTOR$1);
-    //   if (alreadyOpen) {
-    //     Modal.getInstance(alreadyOpen).hide();
-    //   }
-    //   const data = Modal.getOrCreateInstance(target);
-    //   data.toggle(this);
-    // });
+    return {name: name, dials: dials.join(";")};
 }

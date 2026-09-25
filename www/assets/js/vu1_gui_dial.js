@@ -1,202 +1,116 @@
+// Dial settings view: shows one dial's details and sends identify, behaviour, name, reload and reset commands.
 
-// When page is loaded
+const dial_uid = urlParams.get('uid');
+
 $(function() {
-  // Handler for .ready() called.
     gui_update_dial_ui();
-
-    // re-trigger
-    triggerTooltipGen();
-    triggerPopoverGen();
+    initBsWidgets();
 });
 
 
-$("#btn-change-name").on( "click", function() {
+/** GET a per-dial endpoint for this view's dial, adding the master key. */
+function dialCall(op, params = {})
+{
+    const query = new URLSearchParams({...params, key: API_MASTER_KEY});
+    return fetch('/api/v0/dial/' + dial_uid + '/' + op + '?' + query);
+}
+
+
+$("#btn-change-name").on( "click", async function() {
     const new_name = $("#new-dial-name").val();
 
-    if (
-        (new_name != undefined) &&
-        (new_name !== "") &&
-        (new_name.length >= 3) &&
-        (new_name.length <= 30)
-        )
-    {
-        $("#new-dial-name").removeClass("is-invalid");
-        $("#dial-name-rules").hide();
-        gui_update_dial_name(new_name);
-    }
-    else
+    if (new_name.length < 3 || new_name.length > 30)
     {
         $("#dial-name-rules").show();
         $("#new-dial-name").removeClass("is-valid");
         $("#new-dial-name").addClass("is-invalid");
+        return;
+    }
+
+    $("#new-dial-name").removeClass("is-invalid");
+    $("#dial-name-rules").hide();
+
+    const response = await dialCall('name', {name: new_name});
+    if (response.status == 201)
+    {
+        $('#dial-title').text('Name: '+ new_name);
+        $("#dial-server-issue").hide();
+        $("#new-dial-name").addClass("is-valid");
+    }
+    else if (!response.ok)
+    {
+        const result = await response.json();
+        $("#dial-server-issue-message").text('error: '+ result['message']);
+        $("#dial-server-issue").show();
     }
 } );
 
 // Identify buttons
 $(".vu1-identify-button").on( "click", function() {
-    const r = $(this).data('sk-red');
-    const g = $(this).data('sk-green');
-    const b = $(this).data('sk-blue');
-    const v = $(this).data('sk-value');
-
-    gui_update_dial_backlight(r,g,b);
-    gui_update_dial_value(v);
+    const b = $(this).data();
+    dialCall('backlight', {red: b.skRed, green: b.skGreen, blue: b.skBlue});
+    dialCall('set', {value: b.skValue});
 });
 
 // Behaviour buttons
-$(".vu1-behaviour-button").on( "click", function() {
-    const dial_period = $(this).data('sk-dial-period');
-    const dial_step = $(this).data('sk-dial-step');
-    const bl_period = $(this).data('sk-backlight-period');
-    const bl_step = $(this).data('sk-backlight-step');
-
-    gui_set_dial_easing(dial_period, dial_step);
-    gui_set_backlight_easing(bl_period, bl_step);
+$(".vu1-behaviour-button").on( "click", async function() {
+    const b = $(this).data();
+    const responses = await Promise.all([
+        dialCall('easing/dial', {step: b.skDialStep, period: b.skDialPeriod}),
+        dialCall('easing/backlight', {step: b.skBacklightStep, period: b.skBacklightPeriod}),
+    ]);
+    if (responses.some(r => r.ok))
+    {
+        window.location.reload();
+    }
 });
 
 
 //Dial info buttons
-$("#dial-reload-info").on( "click", function() {
+$("#dial-reload-info").on( "click", async function() {
     $("#dial-reload-container").html('<span class="status status-indigo"><span class="status-dot status-dot-animated"></span>Loading...</span>');
-    gui_reload_dial_info();
+    const response = await dialCall('reload');
+    if (response.ok)
+    {
+        window.location.reload();
+    }
 });
 
-$("#dial-reset-device").on( "click", function() {
+$("#dial-reset-device").on( "click", async function() {
     if (!confirm("Reset this dial? Its cached backlight state is cleared and "
                  + "its value, colour and image are re-pushed."))
     {
         return;
     }
     $("#dial-reset-container").html('<span class="status status-red"><span class="status-dot status-dot-animated"></span>Resetting...</span>');
-    gui_reset_dial();
+    const response = await dialCall('reset').catch(() => null);
+    if (!response?.ok)
+    {
+        alert('Failed to reset dial. Request error.');
+    }
+    window.location.reload();
 });
 
 
-
-function gui_set_dial_easing(period, step)
+async function gui_update_dial_ui()
 {
-    const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/easing/dial?step='+ step +'&period='+ period +'&key='+ API_MASTER_KEY )
-    .done(function( data ) {
-        window.location.reload(true);
-    });
+    const dial_info = await vu1_get_dial_info(dial_uid);
+    if (!('uid' in dial_info))
+    {
+        $('#dial-title').text('Name: Unknown (Invalid/Missing dial?)');
+        return;
+    }
+
+    $('#dial-title').text('Name: '+ dial_info['dial_name']);
+    $('#dial-uid').text(dial_info['uid']);
+    $('#dial-type').text((dial_info['index'] == 0) ? 'HUB+Dial' : 'Dial');
+    $('#dial-fw-version').text(dial_info['fw_version']);
+    $('#dial-fw-build').text(dial_info['fw_hash']);
+    $('#dial-hw-version').text(dial_info['hw_version']);
+    $('#dial-protocol-version').text(dial_info['protocol_version']);
+    $('#dial-easing-step').text(dial_info['easing']['dial_step']);
+    $('#dial-easing-period').text(dial_info['easing']['dial_period']);
+    $('#backlight-easing-step').text(dial_info['easing']['backlight_step']);
+    $('#backlight-easing-period').text(dial_info['easing']['backlight_period']);
+    $("#dial-background-img").attr("src","/api/v0/dial/"+dial_uid+"/image/get");
 }
-
-function gui_set_backlight_easing(period, step)
-{
-    const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/easing/backlight?step='+ step +'&period='+ period +'&key='+ API_MASTER_KEY )
-    .done(function( data ) {
-        window.location.reload(true);
-    });
-}
-
-function gui_reset_dial()
-{
-    const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/reset?key='+ API_MASTER_KEY )
-    .done(function( data ) {
-        window.location.reload(true);
-    })
-    .fail(function() {
-        alert('Failed to reset dial. Request error.');
-        window.location.reload(true);
-    });
-}
-
-function gui_reload_dial_info()
-{
-    const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/reload?key='+ API_MASTER_KEY )
-    .done(function( data ) {
-        window.location.reload(true);
-    });
-}
-
-function gui_update_dial_backlight(r, g, b)
-{
-    const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/backlight?red='+ r +'&green='+ g +'&blue='+ b +'&key='+ API_MASTER_KEY );
-}
-
-function gui_update_dial_value(v)
-{
-    const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/set?value='+ v +'&key='+ API_MASTER_KEY );
-}
-
-function gui_update_dial_name(name)
-{
-    const dial_uid = $.urlParam('uid');
-
-    $.ajax({
-      url  : '/api/v0/dial/' + dial_uid  + '/name?name='+ name +'&key='+ API_MASTER_KEY,
-      type : 'GET',
-    })
-    .done(function(data, statusText, xhr){
-      var status = xhr.status;                //200
-        if (status == 201)
-        {
-            $('#dial-title').text('Name: '+ name);
-            $('#dial-name').text(name);
-            $("#dial-server-issue").hide();
-            $("#new-dial-name").addClass("is-valid");
-        }
-    })
-    .fail(function(data, statusText, xhr){
-        $("#dial-server-issue-message").text(statusText + ': '+ data['responseJSON']['message']);
-        $("#dial-server-issue").show();
-    });
-
-    // $.get( '/api/v0/dial/' + dial_uid  + '/name?name='+ name +'&key='+ API_MASTER_KEY );
-
-}
-
-function gui_update_dial_ui()
-{
-    const dial_uid = $.urlParam('uid');
-
-    $.when( vu1_get_dial_info(dial_uid)  ).then(function(dial_info) {
-        if (Array.isArray(dial_info) == false || !('uid' in dial_info))
-        {
-            console.log("No dial information. Using default values");
-            // Dial does not exist. Create dummy dial data
-            var easing = [];
-            easing['dial_step'] = "??";
-            easing['dial_period'] = "??";
-            easing['backlight_step'] = "??";
-            easing['backlight_period'] = "??";
-
-            dial_info['dial_name'] = "Unknown (Invalid/Missing dial?)";
-            dial_info['uid'] = "NO-UID";
-            dial_info['fw_version'] = "??";
-            dial_info['fw_hash'] = "??";
-            dial_info['hw_version'] = "??";
-            dial_info['protocol_version'] = "??";
-            dial_info['easing'] = easing;
-            var dial_type = '?unknown?';
-        }
-        else
-        {
-            var dial_type = (dial_info['index'] == 0) ? 'HUB+Dial' : 'Dial';
-        }
-
-
-        $('#dial-title').text('Name: '+ dial_info['dial_name']);
-        $('#dial-name').text(dial_info['dial_name']);
-        $('#dial-uid').text(dial_info['uid']);
-        $('#dial-type').text(dial_type);
-        $('#dial-fw-version').text(dial_info['fw_version']);
-        $('#dial-fw-build').text(dial_info['fw_hash']);
-        $('#dial-hw-version').text(dial_info['hw_version']);
-        $('#dial-protocol-version').text(dial_info['protocol_version']);
-        $('#dial-easing-step').text(dial_info['easing']['dial_step']);
-        $('#dial-easing-period').text(dial_info['easing']['dial_period']);
-        $('#backlight-easing-step').text(dial_info['easing']['backlight_step']);
-        $('#backlight-easing-period').text(dial_info['easing']['backlight_period']);
-        $("#dial-background-img").attr("src","/api/v0/dial/"+dial_uid+"/image/get");
-
-    });
-}
-
-

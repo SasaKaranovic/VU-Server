@@ -1,68 +1,31 @@
+// Read-only VU-Server API calls shared by the Web UI views.
 
-function api_request(url)
+/** GET an API path and return the response's `data`, or [] when the request fails. */
+async function api_request(url)
 {
-    var items = [];
-
-    jQuery.ajax({
-        url: "/api/v0/" + url,
-        success: function (result) {
-            if (result['status'] == 'ok')
-            {
-                $.each( result['data'], function( key, val ) {
-                    items[key] = val;
-                });
-            }
-        },
-        async: false,
-        dataType: 'json'
-    });
-
-    return items;
+    try {
+        const response = await fetch("/api/v0/" + url);
+        const result = await response.json();
+        return (result['status'] == 'ok' && result['data']) || [];
+    } catch (e) {
+        return [];
+    }
 }
 
-
-function vu1_get_dial_list(return_dict=false)
+/** @returns {Promise<Object[]>} every dial the server knows. */
+function vu1_get_dial_list()
 {
-    const dial_data = api_request('dial/list'+'?key='+ API_MASTER_KEY);
-    var dials = [];
-
-    if(return_dict)
-    {
-        for (const [key, value] of Object.entries(dial_data))
-        {
-            dials[value['uid']] = value;
-        }
-    }
-    else
-    {
-        dials = dial_data;
-    }
-
-    return dials;
+    return api_request('dial/list?key=' + API_MASTER_KEY);
 }
 
+/** @returns {Promise<Object|Array>} one dial's status, or [] when it is missing. */
 function vu1_get_dial_info(uid)
 {
-    return api_request('dial/'+ uid + '/status'+'?key='+ API_MASTER_KEY);
+    return api_request('dial/' + uid + '/status?key=' + API_MASTER_KEY);
 }
 
-
-function vu1_get_api_keys(return_dict=false)
+/** @returns {Promise<Object[]>} every API key. */
+function vu1_get_api_keys()
 {
-    const api_keys = api_request('admin/keys/list?admin_key='+ API_MASTER_KEY);
-    var keys = [];
-
-    if(return_dict)
-    {
-        for (const [key, value] of Object.entries(api_keys))
-        {
-            keys[value['uid']] = value;
-        }
-    }
-    else
-    {
-        keys = api_keys;
-    }
-
-    return keys;
+    return api_request('admin/keys/list?admin_key=' + API_MASTER_KEY);
 }
