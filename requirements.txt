@@ -1,5 +1,4 @@
 tornado==6.5.7
-numpy==2.5.1
 pillow==12.3.0
 ruamel.yaml==0.19.1
 pyserial==3.5

@@ -1,92 +1,39 @@
+"""Line-framed serial transport for the VU1 hub: one locked write-then-read transaction per command."""
 import time
 from threading import Lock
 import serial as _serial
-import serial.tools.list_ports as _lp
 import serial.tools.list_ports_common as _lpc
 from serial.tools.list_ports import comports
 from dials.base_logger import logger
 
+DEFAULT_READ_TIMEOUT = 5
 
-class SerialHardware(object):
-    def __init__( self,
-                 port_info,
-                 flush_on_write=True,
-                 serialPrefix = '',
-                 serialSuffix = '\r\n',
-                 timeout=0.2,
-                 debug_uart=False):
 
+class SerialHardware:
+    def __init__(self, port_info, timeout):
+        """
+        @param port_info a ListPortInfo, or a device path looked up among comports()
+        @param timeout per-read and per-write port timeout in seconds
+        """
         self.lock = Lock()
 
-        self.flush_on_write = flush_on_write
-        self.serialPrefix = serialPrefix
-        self.serialSuffix = serialSuffix
-        self.debug_uart = debug_uart
-
-        # If port is string, find port by name
         if isinstance(port_info, str):
-            self.port_info = self._find_port_by_name(port_info)
-        else:
-            self.port_info = port_info
-
-        if not isinstance(self.port_info, _lpc.ListPortInfo):
+            port_info = self._find_port_by_name(port_info)
+        if not isinstance(port_info, _lpc.ListPortInfo):
             raise TypeError("The port_info for {} must be of type {}".format(self.__class__, _lpc.ListPortInfo))
+        self.port_info = port_info
 
         self.port = _serial.Serial(
             port=self.port_info.device,
             baudrate=115200,
-            bytesize=_serial.EIGHTBITS,
-            parity=_serial.PARITY_NONE,
-            stopbits=_serial.STOPBITS_ONE,
-            timeout=timeout, # seconds
-            write_timeout=timeout, # seconds
+            timeout=timeout,
+            write_timeout=timeout,
         )
-
-
-        if debug_uart:
-            logger.info("Debug UART is set. UART RX/TX will be printed to debug log")
-
-        logger.debug("Serial driver initialized with")
-        logger.debug("-- flush_on_write: '{}'".format(self.flush_on_write))
-        logger.debug("-- timeout: '{}'".format(timeout))
-
-    def __enter__(self):
-        self.open()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
-
-    def open(self):
-        if self.is_open():
-            if self.debug_uart:
-                logger.debug("Port is already open")
-            return
-        self.port.open()
-        self.port.reset_input_buffer()
-        self.port.reset_output_buffer()
-        if self.debug_uart:
-            logger.debug("Port open and buffers flushed")
-
-    def close(self):
-        if not self.is_open():
-            return
-        self.port.reset_input_buffer()
-        self.port.reset_output_buffer()
-        self.port.close()
-
-    def is_open(self):
-        return self.port.is_open
+        logger.debug(f"Serial driver initialized with timeout {timeout}s")
 
     def assert_open(self):
-        if not self.is_open():
-            raise _serial.SerialException("Serial port must be open. port: \"{}\" description \"{}\"".format(self.port_info.name, self.description()))
-
-    def get_port_info(self):
-        return self.port_info
-
-    def description(self):
-        return self.port_info.description
+        if not self.port.is_open:
+            raise _serial.SerialException("Serial port must be open. port: \"{}\" description \"{}\"".format(self.port_info.name, self.port_info.description))
 
     def _find_port_by_name(self, port_info):
         availablePorts = comports()
@@ -104,120 +51,54 @@ class SerialHardware(object):
                 return port
         return None
 
-    def read_until_response(self, timeout=5):
+    def read_until_response(self, timeout=DEFAULT_READ_TIMEOUT):
+        """Read lines until one starts with '<' or the timeout passes; returns every line read."""
         rx_lines = []
-
-        timeout_timestmap = time.time() + timeout
-        while time.time() <= timeout_timestmap:
-            # Wait for new line
+        deadline = time.monotonic() + timeout
+        while time.monotonic() <= deadline:
             line = self.handle_serial_read()
             if line:
-                if self.debug_uart:
-                    logger.debug(line)
                 rx_lines.append(line)
                 if line.startswith('<'):
                     break
-        # A timeout with no valid '<' reply is reported once by the caller
-        # (serial_transaction), so there's no separate timeout log here -- the
-        # old inline check duplicated the loop guard and fired only sporadically.
         return rx_lines
-
-    def handle_serial_send(self, command):
-        """
-        Basic implementations of serial write for the serial_transaction.
-        Sends the passed string, depending on the object settings, adds
-        a newline and/or flushes the in port before sending
-
-        @param command the command str
-        @return True if the command sent successfully
-        """
-        self.assert_open()
-        command = self.serialPrefix + command + self.serialSuffix
-
-        if self.flush_on_write and self.port.in_waiting > 0:
-            # Routine pre-write hygiene: serial_transaction already drains the RX
-            # buffer, so leftover bytes here are expected, not an error condition.
-            logger.debug("Discarding {} pre-write byte(s) on port \"{}\" ({})".format(self.port.in_waiting, self.port_info.name, self.description()))
-
-        if self.flush_on_write:
-            self.port.reset_input_buffer()
-
-        try:
-            if self.debug_uart:
-                logger.debug(f"Writting: '{command.encode()}'")
-            self.port.write(command.encode())
-            return True
-        except _serial.SerialTimeoutException:
-            logger.error("Warning: writing timed out. port: \"{}\" description \"{}\"".format(self.port_info.name, self.description()))
-            return False
 
     def handle_serial_read(self):
         """
-        Basic read implementation. Reads 1 line and decodes as utf-8
+        Read one line and decode it as utf-8.
 
-        @return the response str, None if the read fails or times out
+        @return the stripped line, '' on a timeout or undecodable bytes, None if the port failed
         """
         try:
-            response = self.port.readline()
-            try:
-                ret = response.decode("utf-8").strip()
-            except Exception as e:
-                logger.error(e)
-                ret = ""
-            return ret
+            return self.port.readline().decode("utf-8").strip()
+        except UnicodeDecodeError as e:
+            logger.error(e)
+            return ""
         except _serial.SerialException as e:
-            # readline() never raises SerialTimeoutException (that is write-only);
-            # a read timeout just returns empty/partial bytes. The exception that
-            # actually surfaces here is a SerialException when the device drops
-            # mid-read. Swallow it so a disconnect can't kill the serial thread.
-            logger.error("Warning: serial read failed. port: \"{}\" description \"{}\": {}".format(self.port_info.name, self.description(), e))
+            # A dropped device raises here; swallowing it keeps the serial worker thread alive.
+            logger.error("Warning: serial read failed. port: \"{}\" description \"{}\": {}".format(self.port_info.name, self.port_info.description, e))
             return None
 
-    def serial_transaction(self, payload, ignore_response=False, read_timeout=None):
+    def serial_transaction(self, payload, read_timeout=DEFAULT_READ_TIMEOUT):
         """
-        Wrapper to send a str payload to the serial port and get a response.
-        Acquires the lock and asserts that the port is open and then calls the handle_serial_send
-        If verify_response is set it reads until the response_re or default status_re is hit and return all lines up to that point or timeout
-        Otherwise returns a single line from handle_serial_read
-        handle_serial_read and handle_serial_send have default implementations that can be overridden
+        Send one command line and read its response under the port lock.
 
-        @param payload the string serial payload passed to handle_serial_send
-        @ignore_response don't read any response
-        @param read_timeout seconds to wait for the response; None uses read_until_response's default
-        @return the result from the handle_serial_read sub payload
+        @param payload the command str, sent with a trailing CRLF
+        @param read_timeout seconds to wait for a '<' reply
+        @return every line read, ending with the '<' reply if one arrived
         """
         with self.lock:
             self.assert_open()
 
-            if not isinstance(payload, str) and not isinstance(payload, bytes) and not isinstance(payload, bytearray):
-                raise TypeError("Serial_transaction expects str/bytes/bytearray")
+            # Leftover bytes from an aborted transaction must never be parsed as this command's reply.
+            stale = self.port.in_waiting
+            if stale:
+                logger.debug(f"serial_transaction: discarding {stale} stale byte(s) before sending {payload!r}")
+            self.port.reset_input_buffer()
 
-            # Drain and DISCARD any stale bytes left in the RX buffer from a
-            # previous/aborted transaction. These must never be merged into this
-            # command's response -- a leftover `<...>` line would otherwise be
-            # parsed as though it were the reply to `payload`.
-            stale_lines = []
-            while self.port.in_waiting:
-                line = self.handle_serial_read()
-                if not line:
-                    # A partial line (bytes with no terminator yet) or a failed
-                    # read leaves in_waiting > 0 while readline() keeps returning
-                    # empty -- the old loop spun here forever, holding the lock.
-                    # Discard whatever raw bytes remain and stop draining.
-                    self.port.reset_input_buffer()
-                    break
-                stale_lines.append(line)
+            self.port.write((payload + '\r\n').encode())
 
-            if stale_lines:
-                logger.debug(f"serial_transaction: discarding {len(stale_lines)} stale buffered line(s) before sending {payload!r}: {stale_lines!r}")
-
-            if not self.handle_serial_send(payload):
-                raise _serial.SerialException("Failed to send {}".format(payload))
-
-            if ignore_response:
-                return []
-
-            rx_lines = self.read_until_response() if read_timeout is None else self.read_until_response(timeout=read_timeout)
+            rx_lines = self.read_until_response(read_timeout)
             if not any(line.startswith('<') for line in rx_lines):
                 logger.warning(f"serial_transaction: no valid response for {payload!r}; received {rx_lines!r}")
             return rx_lines

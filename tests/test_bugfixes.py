@@ -52,9 +52,7 @@ def _bare_driver():
 
 def test_dial_set_backlight_unknown_dial_returns_false_without_crashing():
     driver = _bare_driver()
-    # Previously this resolved to None via _verify_device and then blew up on
-    # self.dials[None]['rgbw'] with a KeyError.
-    assert driver.dial_set_backlight('DOESNOTEXIST', 1, 2, 3, 4) is False
+    assert driver.dial_set_backlight('9', 1, 2, 3, 4) is False
 
 
 # -- #3: dial_multiple_set_percent records values in the cache ----------------
@@ -65,8 +63,6 @@ def test_dial_multiple_set_percent_caches_values():
         0: {'index': '0', 'uid': 'AAA', 'value': 0},
         1: {'index': '1', 'uid': 'BBB', 'value': 0},
     }
-    driver.commands = types.SimpleNamespace(COMM_CMD_SET_DIAL_PERC_MULTIPLE=0)
-    driver.data_type = types.SimpleNamespace(COMM_DATA_KEY_VALUE_PAIR=0)
     sent = {}
 
     def fake_send(*args, **kwargs):  # pragma: no cover - trivial stub
@@ -130,11 +126,6 @@ def test_get_dial_list_rescan_drops_offline_dials():
         0: {'index': '0', 'uid': 'AAA', 'value': 50},
         1: {'index': '1', 'uid': 'BBB', 'value': 75},
     }
-    driver.commands = types.SimpleNamespace(
-        COMM_CMD_RESCAN_BUS=0,
-        COMM_CMD_GET_DEVICES_MAP=1,
-    )
-    driver.data_type = types.SimpleNamespace(COMM_DATA_NONE=0)
 
     # Only index 0 reports online now ("01" = single byte, value 1).
     driver.bus_rescan = lambda: True
@@ -341,11 +332,9 @@ def test_dial_set_backlight_uses_bounded_read_timeout():
     # default that freezes the IOLoop when a dial goes silent.
     driver = object.__new__(DialSerialDriver)
     driver.dials = {0: {'index': '0', 'uid': 'AAA', 'rgbw': [0, 0, 0, 0]}}
-    driver.commands = types.SimpleNamespace(COMM_CMD_SET_RGB_BACKLIGHT=0x13)
-    driver.data_type = types.SimpleNamespace(COMM_DATA_MULTIPLE_VALUE=0x03)
     captured = {}
 
-    def fake_txn(payload, ignore_response=False, read_timeout=None):
+    def fake_txn(payload, read_timeout=None):
         captured['read_timeout'] = read_timeout
         return []  # simulate no response
 
@@ -361,7 +350,7 @@ def test_dial_set_backlight_uses_bounded_read_timeout():
 # -- Cleanup: per-instance dial/key state must not be shared class attributes -
 
 @pytest.mark.parametrize("cls,attrs", [
-    (DialSerialDriver, ('dials', 'hub_info')),
+    (DialSerialDriver, ('dials',)),
     (ServerDialHandler, ('dials', 'hub_info')),
 ])
 def test_mutable_state_is_not_a_class_attribute(cls, attrs):

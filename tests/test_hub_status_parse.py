@@ -1,28 +1,19 @@
 """Hub error statuses must be reported as failures, not silently as success.
 
-`DialSerialDriver._parseResponse` slices the data-type field out of the reply
-as a two-character hex *string* (e.g. `'05'`) and compared it directly to
-`hub_data_types.COMM_DATA_STATUS_CODE`, which is the *int* `0x05`. They are
-never equal, so `_checkStatus` was unreachable and every status-code reply
-fell through to `return ret['data']` -- the raw status string. `'00000001'`
-(GAUGE_STATUS_FAIL) and `'00000002'` (GAUGE_STATUS_BUSY) are truthy, so a
-NAK'd backlight write, percent-set, easing set, calibrate or reset was logged
-as delivered and the retry/backoff machinery only ever fired on timeouts.
+The data-type field of a reply is a hex string off the wire and must be parsed
+before comparing it to `hub_data_types.COMM_DATA_STATUS_CODE`. Returned raw,
+a status payload such as `'00000001'` (GAUGE_STATUS_FAIL) is truthy, so a NAK
+would pass as delivered and skip the retry/backoff path.
 """
-import types
 from threading import Lock
 
 from dial_driver import DialSerialDriver
-from dials.Comms_Hub_Server import hub_commands, hub_data_types, hub_status_codes
 
 
 def _driver():
-    """A DialSerialDriver with the REAL protocol constants and no serial port."""
+    """A DialSerialDriver with no serial port."""
     driver = object.__new__(DialSerialDriver)
     driver.dials = {}
-    driver.commands = hub_commands()
-    driver.data_type = hub_data_types()
-    driver.status_codes = hub_status_codes()
     return driver
 
 
@@ -93,10 +84,6 @@ class _NakHub:
 def test_backlight_write_nakked_by_hub_returns_false():
     driver = _driver()
     driver.lock = Lock()
-    driver.flush_on_write = True
-    driver.serialPrefix = ''
-    driver.serialSuffix = '\r\n'
-    driver.debug_uart = False
     driver.port_info = _FakePortInfo()
     driver.port = _NakHub()
     driver.dials = {0: {'index': '0', 'uid': 'AAA', 'value': 0, 'rgbw': [0, 0, 0, 0]}}

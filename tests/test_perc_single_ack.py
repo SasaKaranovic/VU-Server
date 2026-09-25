@@ -1,24 +1,13 @@
 """COMM_CMD_SET_DIAL_PERC_SINGLE must consume its own hub ACK.
 
-`dial_single_set_percent` was sent with `ignore_response=True` on the premise
-that the hub never ACKs a percent-set. It does: captured traces show
-`>030400020000` answered by `<0305000400000000` ~15-19ms later. Because nobody
-read it, that ACK stayed in the RX buffer and was then handed to whichever
-command ran next -- e.g. a backlight write (cmd 0x13) returning the percent-set's
-`<0305...` line instead of its own `<1305...`:
+The hub answers `>030400020000` with `<0305000400000000` within milliseconds.
+An unread ACK stays in the RX buffer, where the next command, such as a
+backlight write (cmd 0x13), would take the `<0305...` line as its own reply:
 
-    Sending `>030400020000`          <- percent-set, response ignored
+    Sending `>030400020000`          <- percent-set, response unread
     Sending `>130300050000000000`    <- backlight
     <0305000400000000                <- cmd 03 reply parsed as the backlight reply
-
-When the bus was instead idle long enough for the ACK to land before the next
-command, it surfaced as "discarding 1 stale buffered line(s)". Same orphaned
-ACK, two different symptoms -- which is why it looked intermittent.
 """
-import types
-
-import pytest
-
 from dial_driver import DialSerialDriver
 
 
@@ -78,23 +67,9 @@ def _hub_driver():
 
     driver = object.__new__(DialSerialDriver)
     driver.lock = Lock()
-    driver.flush_on_write = True
-    driver.serialPrefix = ''
-    driver.serialSuffix = '\r\n'
-    driver.debug_uart = False
     driver.port_info = _FakePortInfo()
     driver.port = _FakeHub()
     driver.dials = {0: {'index': '0', 'uid': 'AAA', 'value': 0, 'rgbw': [0, 0, 0, 0]}}
-    driver.commands = types.SimpleNamespace(
-        COMM_CMD_SET_DIAL_PERC_SINGLE=0x03,
-        COMM_CMD_SET_RGB_BACKLIGHT=0x13,
-    )
-    driver.data_type = types.SimpleNamespace(
-        COMM_DATA_MULTIPLE_VALUE=0x03,
-        COMM_DATA_KEY_VALUE_PAIR=0x04,
-        COMM_DATA_STATUS_CODE=0x05,
-    )
-    driver.status_codes = types.SimpleNamespace(GAUGE_STATUS_OK=0x0000)
     return driver
 
 

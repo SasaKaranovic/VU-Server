@@ -1,180 +1,99 @@
-import os
 import time
 import textwrap
-import math
-from datetime import timedelta
-from io import BytesIO
-import numpy as np
 from PIL import Image
 from serial.tools.list_ports import comports
-from dials.Comms_Hub_Server import hub_config, hub_commands, hub_data_types, hub_status_codes
+from dials.Comms_Hub_Server import hub_commands, hub_data_types, hub_status_codes
 from dials.base_logger import logger
-from serial_driver import SerialHardware
+from serial_driver import SerialHardware, DEFAULT_READ_TIMEOUT
 
 
 class DialSerialDriver(SerialHardware):
-    # A backlight write is ACKed by an immediately-returned status code (it is
-    # not gated on the easing animation), so it only needs a short read window.
-    # Keeping this well below the default 5s stops a silent dial from blocking
-    # the caller for the full timeout on every retry.
+    # A backlight write is ACKed at once, not after the easing animation, so a
+    # short read window keeps a silent dial from blocking each retry for 5s.
     BACKLIGHT_READ_TIMEOUT = 0.5
 
-    # A percent-set is ACKed just as promptly (measured 15-19ms on the wire, and
-    # not gated on the easing animation either), so it gets the same short read
-    # window rather than the 5s default.
+    # A percent-set is ACKed just as promptly (15-19ms on the wire).
     DIAL_SET_READ_TIMEOUT = 0.5
 
+    IMAGE_CHUNK_SIZE = 1000
+
     def __init__(self, port_info):
-        super(DialSerialDriver, self).__init__(port_info, timeout=2)
-
-        # Per-instance state (previously class attributes shared across every
-        # DialSerialDriver instance).
+        super().__init__(port_info, timeout=2)
         self.dials = {}
-        self.hub_info = {}
 
-        self.commands = hub_commands()
-        self.hub_config = hub_config()
-        self.data_type = hub_data_types()
-        self.status_codes = hub_status_codes()
+    def _sendCommand(self, cmd, dataType, *data, read_timeout=DEFAULT_READ_TIMEOUT):
+        """
+        Frame and send one hub command, then parse its reply.
 
-    def _get_max_packet_size(self):
-        max_size = math.floor( (self.hub_config.GAUGE_COMM_MAX_RX_DATA_LEN - (self.hub_config.GAUGE_COMM_HEADER_LEN*2) )/2)
-        return max_size
-
-    def _sendCommand(self, cmd, dataType, dataLen=0, data=None, ignore_response=False, read_timeout=None):
-        if dataLen == 0:
-            payload = ">{:02X}{:02X}{:04X}".format(cmd, dataType, dataLen)
-        elif dataLen == 1:
-            if data < 256:
-                payload = ">{:02X}{:02X}{:04X}{:02X}".format(cmd, dataType, dataLen, data)
-            else:
-                payload = ">{:02X}{:02X}{:04X}{:04X}".format(cmd, dataType, dataLen+1, data)
-        elif dataLen > 1:
-            formattedData = ""
-            for elem in data:
-                if isinstance(elem, str):
-                    formattedData = formattedData + f"{int(elem):0{2 if int(elem) < 256 else 4}X}"
-                elif isinstance(elem, int):
-                    formattedData = formattedData + f"{elem:0{2 if elem < 256 else 4}X}"
-                else:
-                    raise ValueError('Unsupported data type ({})'.format(type(elem)))
-
-            payload = ">{:02X}{:02X}{:04X}{}".format(cmd, dataType, int(len(formattedData)/2), formattedData)
-        else:
-            raise ValueError(f"Unexpected dataLen={dataLen!r}")
-
-        logger.debug(f"CMD:{cmd} - Type:{dataType} - Len:{dataLen}".format(payload))
-        logger.debug("Sending `{}`".format(payload))
-        response = self.serial_transaction(payload, ignore_response=ignore_response, read_timeout=read_timeout)
-        if ignore_response:
-            return True
+        @param data byte values; ints or numeric strings, each 0-255
+        @returns the reply payload str, or a bool for a status reply or no reply
+        """
+        body = bytes(int(elem) for elem in data).hex().upper()
+        payload = f">{cmd:02X}{dataType:02X}{len(body) // 2:04X}{body}"
+        logger.debug(f"Sending `{payload}`")
+        response = self.serial_transaction(payload, read_timeout=read_timeout)
         return self._parseResponse(response, expected_cmd=cmd)
 
-    def _send_cmd_with_uin32(self, dialID, cmd, value, dt=None):
-        if dt is None:
-            dt = self.data_type.COMM_DATA_SINGLE_VALUE
-        data = [dialID, ((value>>24)&0xFF), ((value>>16)&0xFF), ((value>>8)&0xFF), (value&0xFF)]
-        return self._sendCommand(cmd, dt, len(data), data)
+    def _send_cmd_with_uin32(self, dialID, cmd, value, dt=hub_data_types.COMM_DATA_SINGLE_VALUE):
+        return self._sendCommand(cmd, dt, dialID, *(value & 0xFFFFFFFF).to_bytes(4, 'big'))
 
-    def _parseResponse(self, response, expected_cmd=None):
-        """Pull this command's reply out of the received lines.
+    @staticmethod
+    def _hex(field):
+        """Parse a hex field off the wire; None when malformed."""
+        try:
+            return int(field, 16)
+        except ValueError:
+            return None
 
-        The hub echoes the command byte back in its reply, so when expected_cmd
-        is given, a reply carrying a different command is a reply to something
-        else and must be skipped -- accepting it silently returns another
-        command's status (or payload) as though it were ours.
+    def _parseResponse(self, response, expected_cmd):
         """
-        for idx, line in enumerate(response):
-            logger.debug(line)
-            if line.startswith('<'):
-                cmd = line[1:3]
-                dataType = line[3:5]
-                dataLen = line[5:9]
-                data = line[9:]
-                ret = {'cmd':cmd, 'dataType':dataType, 'dataLen':dataLen, 'data':data}
+        Pull this command's reply out of the received lines.
 
-                if expected_cmd is not None and not self._cmd_matches(cmd, expected_cmd):
-                    logger.error(f"_parseResponse: ignoring reply for command 0x{cmd} "
-                                 f"while awaiting 0x{expected_cmd:02X}: {line!r}")
-                    continue
+        The hub echoes the command byte, so a reply carrying another command
+        answers something else and is skipped.
+        """
+        for line in response:
+            if not line.startswith('<'):
+                continue
 
-                logger.debug(f"_parseResponse: matched line {idx+1}/{len(response)}: {line!r}")
-                # `dataType` is a two-char hex *string* off the wire; the
-                # protocol constant is an int. Comparing them directly never
-                # matched, so status-code replies were returned as their raw
-                # (truthy) payload and hub errors passed as success.
-                if self._is_status_reply(dataType):
-                    return self._checkStatus(ret['data'])
-                return ret['data']
+            if self._hex(line[1:3]) != expected_cmd:
+                logger.error(f"_parseResponse: ignoring reply {line!r} while awaiting 0x{expected_cmd:02X}")
+                continue
+
+            logger.debug(f"_parseResponse: matched {line!r}")
+            data = line[9:]
+            if self._hex(line[3:5]) != hub_data_types.COMM_DATA_STATUS_CODE:
+                return data
+            status = self._hex(data)
+            if status == hub_status_codes.GAUGE_STATUS_OK:
+                return True
+            logger.error(f"Hub returned status {data!r} for command 0x{expected_cmd:02X}")
+            return False
         return False
 
-    def _is_status_reply(self, dataType):
+    @staticmethod
+    def _hex_decode(payload, text):
+        """Decode a hex payload to str when text is set, else to bytes; empty on a missing or malformed payload."""
+        empty = '' if text else b''
+        if not payload or not isinstance(payload, str):
+            logger.error(f"Expected a hex payload, got {payload!r}")
+            return empty
         try:
-            return int(dataType, 16) == self.data_type.COMM_DATA_STATUS_CODE
-        except ValueError:
-            logger.error(f"_is_status_reply: malformed data-type byte {dataType!r}")
-            return False
-
-    def _cmd_matches(self, cmd, expected_cmd):
-        try:
-            return int(cmd, 16) == expected_cmd
-        except ValueError:
-            logger.error(f"_cmd_matches: malformed command byte {cmd!r}")
-            return False
-
-    def _checkStatus(self, statusCode):
-        try:
-            code = int(statusCode, 16)
-        except ValueError:
-            logger.error(f"_checkStatus: malformed status payload {statusCode!r}")
-            return False
-        if code == self.status_codes.GAUGE_STATUS_OK:
-            return True
-        logger.error("Error code: {}".format(code))
-        return False
-
-    def _convert_hex_str_to_str(self, hex_string):
-        if not hex_string:
-            logger.error(f"Empty hex string received {hex_string}")
-            return ''
-
-        if len(hex_string)%2:
-            logger.error(f"Hex string should be divisible by 2! (len={len(hex_string)})")
-            return ''
-
-        try:
-            byte_array = bytearray.fromhex(hex_string)
-            hex_string = byte_array.decode()
-            return hex_string
-        except Exception as e:
-            logger.error(e)
-            return ''
-
-    def _convert_hex_str_to_byte_array(self, hex_string):
-        if not hex_string:
-            logger.error(f"Empty hex string received {hex_string}")
-            return bytes()
-
-        if len(hex_string)%2:
-            logger.error(f"Hex string should be divisible by 2! (len={len(hex_string)})")
-            return bytes()
-
-        try:
-            byte_array = bytearray.fromhex(hex_string)
-            return byte_array
-        except Exception as e:
-            logger.error(e)
-            return bytes()
+            raw = bytes.fromhex(payload)
+            return raw.decode() if text else raw
+        except ValueError as e:
+            logger.error(f"Malformed hex payload {payload!r}: {e}")
+            return empty
 
     def bus_rescan(self):
         logger.debug("@bus_rescan")
-        return self._sendCommand(self.commands.COMM_CMD_RESCAN_BUS, self.data_type.COMM_DATA_NONE)
+        return self._sendCommand(hub_commands.COMM_CMD_RESCAN_BUS, hub_data_types.COMM_DATA_NONE)
 
     def get_dial_list(self, rescan=False):
         logger.debug(f"@get_dial_list(rescan={rescan})")
         if rescan:
             resp = self.bus_rescan()
-            resp = self._sendCommand(self.commands.COMM_CMD_GET_DEVICES_MAP, self.data_type.COMM_DATA_NONE)
+            resp = self._sendCommand(hub_commands.COMM_CMD_GET_DEVICES_MAP, hub_data_types.COMM_DATA_NONE)
             if not resp:
                 logger.error("Invalid response received from COMM_CMD_GET_DEVICES_MAP")
                 logger.error(resp)
@@ -229,21 +148,6 @@ class DialSerialDriver(SerialHardware):
 
         self.dial_multiple_set_percent(dials, values)
 
-
-    def get_dial(self, dialID=None, UID=None):
-        if dialID is None and UID is None:
-            logger.error("Both dial ID and UID can't be none!")
-            return {}
-
-        if dialID is None:
-            dialID = self._findDial(UID)
-
-        if dialID is None:
-            logger.error("Dial with UID `{}` is not present.".format(UID))
-            return None
-
-        return self.dials[dialID]
-
     def set_dial(self, dialID=None, UID=None, value=None, sendCMD=True):
         if dialID is None and UID is None:
             logger.error("Both dial ID and UID can't be none!")
@@ -270,131 +174,72 @@ class DialSerialDriver(SerialHardware):
                 return entry
         return None
 
-    def _verify_device(self, device):
-        if isinstance(device, str):
-            if len(device) <= 3:
-                return int(device)
-            uid = device
-            device = self._findDial(uid)
-
-            if device is None:
-                logger.error(f"Can not find dial '{uid}'")
-            return device
-
-        elif isinstance(device, int):
-            return device
-
-        else:
-            raise ValueError(f"Unexpected device type type(device)='{type(device)}'")
-
     def dial_get_uid(self, dialIndex):
         logger.debug(f"@dial_get_uid(dialIndex={dialIndex})")
-        return self._sendCommand(self.commands.COMM_CMD_GET_DEVICE_UID, self.data_type.COMM_DATA_SINGLE_VALUE, 1, dialIndex)
+        return self._sendCommand(hub_commands.COMM_CMD_GET_DEVICE_UID, hub_data_types.COMM_DATA_SINGLE_VALUE, dialIndex)
+
+    def _get_info_str(self, cmd, dialIndex):
+        return self._hex_decode(self._sendCommand(cmd, hub_data_types.COMM_DATA_SINGLE_VALUE, dialIndex), text=True)
 
     def dial_get_fw_hash(self, dialIndex):
-        logger.debug(f"@dial_get_fw_hash(dialIndex={dialIndex})")
-        cmd = self.commands.COMM_CMD_GET_BUILD_INFO
-        data = dialIndex
-        ret = self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, 1, data)
-        return self._convert_hex_str_to_str(ret)
+        return self._get_info_str(hub_commands.COMM_CMD_GET_BUILD_INFO, dialIndex)
 
     def dial_get_fw_version(self, dialIndex):
-        logger.debug(f"@dial_get_fw_version(dialIndex={dialIndex})")
-        cmd = self.commands.COMM_CMD_GET_FW_INFO
-        data = dialIndex
-        ret = self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, 1, data)
-        return self._convert_hex_str_to_str(ret)
+        return self._get_info_str(hub_commands.COMM_CMD_GET_FW_INFO, dialIndex)
 
     def dial_get_hw_version(self, dialIndex):
-        logger.debug(f"@dial_get_hw_version(dialIndex={dialIndex})")
-        cmd = self.commands.COMM_CMD_GET_HW_INFO
-        data = dialIndex
-        ret = self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, 1, data)
-        return self._convert_hex_str_to_str(ret)
+        return self._get_info_str(hub_commands.COMM_CMD_GET_HW_INFO, dialIndex)
 
     def dial_get_protocol_version(self, dialIndex):
-        logger.debug(f"@dial_get_hw_version(dialIndex={dialIndex})")
-        cmd = self.commands.COMM_CMD_GET_PROTOCOL_INFO
-        data = dialIndex
-        ret = self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, 1, data)
-        return self._convert_hex_str_to_str(ret)
-
-    def set_dial_power(self, powerOn=True):
-        logger.debug(f"@set_dial_power(powerOn={powerOn})")
-        data = 0
-        if powerOn is True:
-            data = 1
-        return self._sendCommand(self.commands.COMM_CMD_DIAL_POWER, self.data_type.COMM_DATA_SINGLE_VALUE, 1, data)
+        return self._get_info_str(hub_commands.COMM_CMD_GET_PROTOCOL_INFO, dialIndex)
 
     def dial_calibrate(self, dialID, value, fullScale=True):
         logger.debug(f"@dial_calibrate(dialID={dialID}, value={value}, fullScale={fullScale})")
         if fullScale:
-            cmd = self.commands.COMM_CMD_SET_DIAL_CALIBRATE_MAX
+            cmd = hub_commands.COMM_CMD_SET_DIAL_CALIBRATE_MAX
         else:
-            cmd = self.commands.COMM_CMD_SET_DIAL_CALIBRATE_HALF
+            cmd = hub_commands.COMM_CMD_SET_DIAL_CALIBRATE_HALF
 
-        return self._send_cmd_with_uin32(dialID, cmd, value, dt=self.data_type.COMM_DATA_KEY_VALUE_PAIR)
+        return self._send_cmd_with_uin32(dialID, cmd, value, dt=hub_data_types.COMM_DATA_KEY_VALUE_PAIR)
 
     def dial_easing_dial_step(self, dialID, value):
         logger.debug(f"@dial_easing_dial_step(dialID={dialID}, value={value})")
-        cmd = self.commands.COMM_CMD_SET_DIAL_EASING_STEP
-        data = [dialID, ((value>>24)&0xFF), ((value>>16)&0xFF), ((value>>8)&0xFF), (value&0xFF)]
-        return self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, len(data), data)
+        return self._send_cmd_with_uin32(dialID, hub_commands.COMM_CMD_SET_DIAL_EASING_STEP, value)
 
     def dial_easing_dial_period(self, dialID, value):
         logger.debug(f"@dial_easing_dial_period(dialID={dialID}, value={value})")
-        cmd = self.commands.COMM_CMD_SET_DIAL_EASING_PERIOD
-        data = [dialID, ((value>>24)&0xFF), ((value>>16)&0xFF), ((value>>8)&0xFF), (value&0xFF)]
-        return self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, len(data), data)
+        return self._send_cmd_with_uin32(dialID, hub_commands.COMM_CMD_SET_DIAL_EASING_PERIOD, value)
 
     def dial_easing_backlight_step(self, dialID, value):
         logger.debug(f"@dial_easing_backlight_step(dialID={dialID}, value={value})")
-        cmd = self.commands.COMM_CMD_SET_BACKLIGHT_EASING_STEP
-        data = [dialID, ((value>>24)&0xFF), ((value>>16)&0xFF), ((value>>8)&0xFF), (value&0xFF)]
-        return self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, len(data), data)
+        return self._send_cmd_with_uin32(dialID, hub_commands.COMM_CMD_SET_BACKLIGHT_EASING_STEP, value)
 
     def dial_easing_backlight_period(self, dialID, value):
         logger.debug(f"@dial_easing_backlight_period(dialID={dialID}, value={value})")
-        cmd = self.commands.COMM_CMD_SET_BACKLIGHT_EASING_PERIOD
-        data = [dialID, ((value>>24)&0xFF), ((value>>16)&0xFF), ((value>>8)&0xFF), (value&0xFF)]
-        return self._sendCommand(cmd, self.data_type.COMM_DATA_SINGLE_VALUE, len(data), data)
+        return self._send_cmd_with_uin32(dialID, hub_commands.COMM_CMD_SET_BACKLIGHT_EASING_PERIOD, value)
 
     def dial_easing_get_config(self, dialID):
-        easing = { 'dial_step':0, 'dial_period':0, 'backlight_step':0, 'backlight_period':0 }
         logger.debug(f"@dial_easing_get_config(dialID={dialID})")
-        ret = self._sendCommand(self.commands.COMM_CMD_GET_EASING_CONFIG, self.data_type.COMM_DATA_SINGLE_VALUE, 1, dialID)
-        ret = self._convert_hex_str_to_byte_array(ret)
+        keys = ('dial_step', 'dial_period', 'backlight_step', 'backlight_period')
+        ret = self._sendCommand(hub_commands.COMM_CMD_GET_EASING_CONFIG, hub_data_types.COMM_DATA_SINGLE_VALUE, dialID)
+        ret = self._hex_decode(ret, text=False)
 
         if len(ret) < 16:
             logger.error(f"dial_easing_get_config: expected 16 bytes, got {len(ret)} for dial {dialID}")
-            return easing
+            return dict.fromkeys(keys, 0)
 
-        easing['dial_step']         = int(ret[0]) << 24 | int(ret[1]) << 16 | int(ret[2]) << 8 | int(ret[3])
-        easing['dial_period']       = int(ret[4]) << 24 | int(ret[5]) << 16 | int(ret[6]) << 8 | int(ret[7])
-        easing['backlight_step']    = int(ret[8]) << 24 | int(ret[9]) << 16 | int(ret[10]) << 8 | int(ret[11])
-        easing['backlight_period']  = int(ret[12]) << 24 | int(ret[13]) << 16 | int(ret[14]) << 8 | int(ret[15])
-        # logger.debug(f"@ret:{ret}")
-        # logger.debug(f"@easing:{easing}")
-
-        return easing
+        return {key: int.from_bytes(ret[4*i:4*i+4], 'big') for i, key in enumerate(keys)}
 
     def dial_single_set_raw(self, dialID, value):
         logger.debug(f"@dial_single_set_raw(dialID={dialID}, value={value})")
-        data = [dialID, ((value>>8)&0xFF), (value&0xFF)]
-        return self._sendCommand(self.commands.COMM_CMD_SET_DIAL_RAW_SINGLE, self.data_type.COMM_DATA_KEY_VALUE_PAIR, len(data), data)
+        return self._sendCommand(hub_commands.COMM_CMD_SET_DIAL_RAW_SINGLE, hub_data_types.COMM_DATA_KEY_VALUE_PAIR, dialID, (value>>8)&0xFF, value&0xFF)
 
     def dial_single_set_percent(self, dialID, value):
         logger.debug(f"@dial_single_set_percent(dialID={dialID}, value={value})")
         if self.dials.get(int(dialID), False):
             self.dials[int(dialID)]['value'] = value
-        data = [dialID, (value&0xFF)]
-        # The hub DOES ACK a percent-set (`>0304...` -> `<0305000400000000`).
-        # Sending this with ignore_response=True left that ACK sitting in the RX
-        # buffer, where the next command on the shared port consumed it as its
-        # own reply -- a backlight write would return the percent-set's status
-        # instead of its own. Read the ACK here, bounded by a short timeout so a
-        # silent dial still can't stall the serial worker.
-        return self._sendCommand(self.commands.COMM_CMD_SET_DIAL_PERC_SINGLE, self.data_type.COMM_DATA_KEY_VALUE_PAIR, len(data), data, read_timeout=self.DIAL_SET_READ_TIMEOUT)
+        # The hub ACKs a percent-set; an unread ACK would be taken as the next command's reply.
+        return self._sendCommand(hub_commands.COMM_CMD_SET_DIAL_PERC_SINGLE, hub_data_types.COMM_DATA_KEY_VALUE_PAIR, dialID, value&0xFF, read_timeout=self.DIAL_SET_READ_TIMEOUT)
 
     def dial_multiple_set_percent(self, devices, values):
         logger.debug(f"@dial_multiple_set_percent(devices={devices}, values={values})")
@@ -403,195 +248,103 @@ class DialSerialDriver(SerialHardware):
             return False
 
         data = []
-        for i in range(len(devices)):
-            self.set_dial(dialID=devices[i], value=values[i], sendCMD=False)
-            data.append(devices[i])
-            data.append(values[i])
+        for device, value in zip(devices, values):
+            self.set_dial(dialID=device, value=value, sendCMD=False)
+            data += [device, value]
 
-        return self._sendCommand(self.commands.COMM_CMD_SET_DIAL_PERC_MULTIPLE, self.data_type.COMM_DATA_KEY_VALUE_PAIR, len(data), data)
+        return self._sendCommand(hub_commands.COMM_CMD_SET_DIAL_PERC_MULTIPLE, hub_data_types.COMM_DATA_KEY_VALUE_PAIR, *data)
 
     def dial_display_clear(self, device, whiteBackground=True):
         logger.debug(f"@dial_display_clear(device={device}, whiteBackground={whiteBackground})")
-        if whiteBackground:
-            data = [int(device), 0]
-        else:
-            data = [int(device), 1]
-        return self._sendCommand(self.commands.COMM_CMD_DISPLAY_CLEAR, self.data_type.COMM_DATA_SINGLE_VALUE, len(data), data)
+        return self._sendCommand(hub_commands.COMM_CMD_DISPLAY_CLEAR, hub_data_types.COMM_DATA_SINGLE_VALUE, device, 0 if whiteBackground else 1)
 
     def dial_display_goto_xy(self, device, x, y):
         logger.debug(f"@dial_display_goto_xy(device={device}, x={x}, y={y})")
-        data = [int(device), ((x>>8)&0xFF), (x&0xFF), ((y>>8)&0xFF), (y&0xFF)]
-        return self._sendCommand(self.commands.COMM_CMD_DISPLAY_GOTO_XY, self.data_type.COMM_DATA_SINGLE_VALUE, len(data), data)
+        return self._sendCommand(hub_commands.COMM_CMD_DISPLAY_GOTO_XY, hub_data_types.COMM_DATA_SINGLE_VALUE, device, (x>>8)&0xFF, x&0xFF, (y>>8)&0xFF, y&0xFF)
 
     def display_send_image(self, device, img_filepath):
+        """Send an image file's pixels to the display buffer; False if the file cannot be converted or a chunk fails."""
         logger.debug(f"@display_send_image(device={device}, img_filepath={img_filepath})")
-        if not os.path.exists(img_filepath):
-            logger.error(f"File '{img_filepath}' does not exist.")
+        img_data = self.img_to_binary(img_filepath)
+        if img_data is None:
             return False
-
-        img_data = self.img_to_binary(img_filepath, True)
         return self.display_send_image_data(device, img_data)
 
     def display_send_image_data(self, device, imageData):
-        logger.debug(f"@display_send_image_data(device={device}, imageData={imageData})")
-        device = self._verify_device(device)
-
-        # chunkSize = self._get_max_packet_size()
-        chunkSize = 1000 # 1000 bytes at a time
-        dataLen = len(imageData)
-        chunks = math.ceil(len(imageData)/chunkSize)
-
-        logger.debug(f"Split {dataLen} bytes into {chunks} chunks of {chunkSize} bytes.")
-
-        start_time = time.time()
-        for i in range(chunks):
-            start = i*chunkSize
-            end = i*chunkSize + chunkSize
-            dataChunk = imageData[start:end]
-            if not self._send_image_chunk(device, dataChunk):
-                return False
-            time.sleep(0.2)
-        end_time = time.time()
-        logger.debug(f"Send image data took {timedelta(seconds=end_time-start_time)}")
-        return True
-
-    def _send_image_chunk(self, device, imageBuffer):
-        logger.debug(f"@_send_image_chunk(device={device})")
-        if len(imageBuffer) <= 0:
+        logger.debug(f"@display_send_image_data(device={device}, {len(imageData)} bytes)")
+        if not imageData:
             logger.error("Invalid image buffer size!")
             return False
-        if isinstance(device, str):
-            device = self._findDial(device)
-            device = int(device)
 
-        data = [ device ]
-        data.extend(imageBuffer)
-        return self._sendCommand(self.commands.COMM_CMD_DISPLAY_IMG_DATA, self.data_type.COMM_DATA_SINGLE_VALUE, len(data), data)
+        start_time = time.monotonic()
+        for start in range(0, len(imageData), self.IMAGE_CHUNK_SIZE):
+            chunk = imageData[start:start + self.IMAGE_CHUNK_SIZE]
+            if not self._sendCommand(hub_commands.COMM_CMD_DISPLAY_IMG_DATA, hub_data_types.COMM_DATA_SINGLE_VALUE, device, *chunk):
+                return False
+            time.sleep(0.2)
+        logger.debug(f"Send image data took {time.monotonic() - start_time:.3f}s")
+        return True
 
-    def _format_bits(self, bits):
-        buff = []
-        for i in bits:
-            if i > 127:
-                buff.append(1)
-            else:
-                buff.append(0)
-        return buff
+    @staticmethod
+    def img_to_binary(img_filepath):
+        """
+        Pack an image as 1-bit columns, 8 vertical pixels per byte with the top pixel in the MSB.
 
-    def binary_to_image_data(self, image):
-        img = Image.open(BytesIO(image))
-        img = img.convert("L")
-
-        imgData = np.asarray(img)
-        imgData = imgData.T.tolist()
-
-        buff = []
-        # Each byte is 8 vertical bits
-        for bits in imgData:
-            bits = self._format_bits(bits)
-            byte = [int("".join(map(str, bits[i:i+8])), 2) for i in range(0, len(bits), 8)]
-            buff.append(byte)
-
-        buff = [item for sublist in buff for item in sublist]
-
-        return buff
-
-    def img_to_binary(self, img_filepath, flatten=True):
-        buff = []
-
-        if not os.path.exists(img_filepath):
-            logger.error(f"File {img_filepath} does not exist!. Returning empty array.")
-            return buff
-
+        @returns the packed bytes, or None if the file cannot be read as an image
+        """
         try:
-            #Load image and convert to greyscale
-            img = Image.open(img_filepath)
-            img = img.convert("L")
-
-            imgData = np.asarray(img)
-            imgData = imgData.T.tolist()
-
-            # Each byte is 8 vertical bits
-            for bits in imgData:
-                bits = self._format_bits(bits)
-                byte = [int("".join(map(str, bits[i:i+8])), 2) for i in range(0, len(bits), 8)]
-                buff.append(byte)
-
-            if flatten:
-                buff = [item for sublist in buff for item in sublist]
+            with Image.open(img_filepath) as img:
+                columns = img.convert("L").point(lambda p: 255 if p > 127 else 0, "1").transpose(Image.Transpose.TRANSPOSE)
         except Exception as e:
-            logger.error(e)
+            logger.error(f"Cannot convert image '{img_filepath}': {e}")
+            return None
 
-        return buff
+        data = bytearray(columns.tobytes())
+        # A partial last byte in each column carries its bits in the low end, not padded at the high end.
+        height = columns.width
+        if height % 8:
+            stride = -(-height // 8)
+            data[stride-1::stride] = bytes(b >> (8 - height % 8) for b in data[stride-1::stride])
+        return bytes(data)
 
     def update_display(self, device, imageData=None, imageFile=None):
+        """Clear the display, send the image, and show it; False if the image could not be sent."""
         logger.debug(f"@update_display(device={device})")
-        device = self._verify_device(device)
+        device = int(device)
 
         self.dial_display_clear(device, True)
         self.dial_display_goto_xy(device, 0, 0)
 
         if imageData is not None:
-            self.display_send_image_data(device, imageData)
+            sent = self.display_send_image_data(device, imageData)
         elif imageFile is not None:
-            self.display_send_image(device, imageFile)
+            sent = self.display_send_image(device, imageFile)
         else:
             raise ValueError("Image data and ImageFile can't both be none!")
-        self.dial_display_show(device)
-        return True
-
-
-    def get_dial_rx_buffer_size(self, device):
-        logger.debug(f"@get_dial_rx_buffer_size(device={device})")
-        rxLen = self._sendCommand(self.commands.COMM_CMD_RX_BUFFER_SIZE, self.data_type.COMM_DATA_SINGLE_VALUE, 1, int(device))
-        if not isinstance(rxLen, str):
-            logger.error(f"get_dial_rx_buffer_size: unexpected response {rxLen!r} for device {device}")
-            return None
-        return int(rxLen[:8], 16)
+        if not sent:
+            return False
+        return self.dial_display_show(device)
 
     def dial_display_show(self, device):
         logger.debug(f"@dial_display_show(device={device})")
-        return self._sendCommand(self.commands.COMM_CMD_DISPLAY_SHOW_IMG, self.data_type.COMM_DATA_SINGLE_VALUE, 1, int(device))
+        return self._sendCommand(hub_commands.COMM_CMD_DISPLAY_SHOW_IMG, hub_data_types.COMM_DATA_SINGLE_VALUE, device)
 
     def dial_set_backlight(self, device, red, green, blue, white):
         logger.debug(f"@dial_set_backlight(device={device}, red={red}, green={green}, blue={blue}, white={white})")
-        device = self._verify_device(device)
-        if device is None or device not in self.dials:
+        device = int(device)
+        if device not in self.dials:
             logger.error(f"dial_set_backlight: unknown device {device!r}")
             return False
-        self.dials[device]['rgbw'][0] = red
-        self.dials[device]['rgbw'][1] = green
-        self.dials[device]['rgbw'][2] = blue
-        self.dials[device]['rgbw'][3] = white
-        data = [device, red, green, blue, white]
-        return self._sendCommand(self.commands.COMM_CMD_SET_RGB_BACKLIGHT, self.data_type.COMM_DATA_MULTIPLE_VALUE, len(data), data, read_timeout=self.BACKLIGHT_READ_TIMEOUT)
-
-    def dial_send_keep_comm_alive(self, device):
-        pass
-        # logger.debug(f"@dial_send_keep_comm_alive(device={device})")
-        # device = self._verify_device(device)
-        # return self._sendCommand(self.commands.DG_HUB_TO_DEV_KEEP_ALIVE, self.data_type.COMM_DATA_NONE)
-
+        self.dials[device]['rgbw'][:] = [red, green, blue, white]
+        return self._sendCommand(hub_commands.COMM_CMD_SET_RGB_BACKLIGHT, hub_data_types.COMM_DATA_MULTIPLE_VALUE, device, red, green, blue, white, read_timeout=self.BACKLIGHT_READ_TIMEOUT)
 
     def provision_dials(self):
         logger.debug("@provision_dials")
-        return self._sendCommand(self.commands.COMM_CMD_PROVISION_DEVICE, self.data_type.COMM_DATA_NONE)
+        return self._sendCommand(hub_commands.COMM_CMD_PROVISION_DEVICE, hub_data_types.COMM_DATA_NONE)
 
     def reset_all_devices(self):
         logger.debug("@reset_all_devices")
-        return self._sendCommand(self.commands.COMM_CMD_RESET_ALL_DEVICES, self.data_type.COMM_DATA_NONE)
-
-    def debug_i2c_scan(self):
-        logger.debug("@debug_i2c_scan")
-        return self._sendCommand(self.commands.COMM_CMD_DEBUG_I2C_SCAN, self.data_type.COMM_DATA_NONE)
-
-    def debug_print_all_dials(self):
-        # Show found dials
-        for entry in self.dials:
-            dial = self.dials[entry]
-            print(f"Dial #{dial['index']}")
-            print(f"  - UID:{dial['uid']}")
-            print(f"  - FriendlyName:{dial['friendlyName']}")
-            print(f"  - Value:{dial['value']}")
+        return self._sendCommand(hub_commands.COMM_CMD_RESET_ALL_DEVICES, hub_data_types.COMM_DATA_NONE)
 
     @classmethod
     def find_gauge_hub(cls):
