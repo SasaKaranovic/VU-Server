@@ -25,9 +25,7 @@ from server import (
     Dial_Reload_Device_Info,
     Dial_Reset_Device,
     Dial_Set_Calibration,
-    Dial_Set_Easing_Dial,
-    Dial_Set_Easing_Backlight,
-    Dial_Get_Easing_Config,
+    Dial_Set_Easing,
 )
 
 ALLOWED = 'ABCDEF'
@@ -73,16 +71,12 @@ class FakeDialHandler:
         self._record('dial_set_calibration')
         return True
 
-    def dial_set_easing_dial(self, dial_uid, step=None, period=None):
-        self._record('dial_set_easing_dial')
+    def dial_set_easing(self, dial_uid, target, step=None, period=None):
+        self._record('dial_set_easing')
         return True
 
-    def dial_set_easing_backlight(self, dial_uid, step=None, period=None):
-        self._record('dial_set_easing_backlight')
-        return True
-
-    def dial_reload_info_from_database(self, gaugeUID):
-        self._record('dial_reload_info_from_database')
+    def dial_set_name(self, dial_uid, name):
+        self._record('dial_set_name')
         return True
 
 
@@ -96,12 +90,6 @@ class FakeConfig:
         if api_key == 'scopedkey':
             return gaugeUID == ALLOWED
         return False
-
-    def update_dial_db_cell(self, dial_uid, cell, value):
-        return True
-
-    def update_dial_db_cell_with_dict(self, dial_uid, values_dict):
-        return True
 
 
 # Each entry: (name, method, url_template, extra_query). {uid} is substituted.
@@ -119,7 +107,6 @@ ENDPOINTS = [
     ('easing_dial', 'GET', "/api/v0/dial/{uid}/easing/dial", '&step=1'),
     ('easing_backlight', 'GET', "/api/v0/dial/{uid}/easing/backlight", '&step=1'),
     ('image_set', 'POST', "/api/v0/dial/{uid}/image/set", ''),
-    ('easing_get', 'GET', "/api/v0/dial/{uid}/easing/get", ''),
 ]
 
 
@@ -140,9 +127,7 @@ class DialAccessControlTestCase(tornado.testing.AsyncHTTPTestCase):
             (r"/api/v0/dial/([0-9A-F]*?)/reload", Dial_Reload_Device_Info, hc),
             (r"/api/v0/dial/([0-9A-F]*?)/reset", Dial_Reset_Device, hc),
             (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, hc),
-            (r"/api/v0/dial/([0-9A-F]*?)/easing/dial", Dial_Set_Easing_Dial, hc),
-            (r"/api/v0/dial/([0-9A-F]*?)/easing/backlight", Dial_Set_Easing_Backlight, hc),
-            (r"/api/v0/dial/([0-9A-F]*?)/easing/get", Dial_Get_Easing_Config, hc),
+            (r"/api/v0/dial/([0-9A-F]*?)/easing/(dial|backlight)", Dial_Set_Easing, hc),
         ])
 
     def _fetch(self, method, url):

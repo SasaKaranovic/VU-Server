@@ -1,18 +1,4 @@
-"""A failed percent-set must be retried, not silently dropped.
-
-`_periodic_update_dial_values` ignored the driver's return value and cleared
-`value_changed` regardless, so a NAK'd or timed-out percent-set was treated
-as delivered. Worse, `dial_set_percent` then short-circuited any request for
-the same value ("already at value"), so the client could not retry it: the
-dial stayed wherever it was until a *different* value was requested.
-
-Values now get the same treatment backlight writes already had: a failed
-send leaves the change pending, retries back off exponentially, and after
-BACKLIGHT_MAX_FAILURES consecutive failures the dial is latched unresponsive
-until a new request re-arms it. That keeps a dead dial from stalling the
-serial worker on every 200ms tick.
-"""
-import types
+"""A failed percent-set stays pending, backs off, and latches unresponsive after BACKLIGHT_MAX_FAILURES."""
 
 import server_dial_handler
 from server_dial_handler import ServerDialHandler
@@ -60,7 +46,7 @@ def test_value_flag_stays_set_when_send_fails(monkeypatch):
     _fake_clock(monkeypatch)
     handler = _handler(_CountingValueDriver(False))
 
-    updated = handler._periodic_update_dial_values()
+    updated = handler._flush('value')
 
     assert updated == 0
     assert handler.dials['AAA']['value_changed'] is True
@@ -70,7 +56,7 @@ def test_value_flag_clears_when_send_succeeds(monkeypatch):
     _fake_clock(monkeypatch)
     handler = _handler(_CountingValueDriver(True))
 
-    updated = handler._periodic_update_dial_values()
+    updated = handler._flush('value')
 
     assert updated == 1
     assert handler.dials['AAA']['value_changed'] is False
@@ -81,12 +67,12 @@ def test_value_send_backs_off_after_failure(monkeypatch):
     driver = _CountingValueDriver(False)
     handler = _handler(driver)
 
-    handler._periodic_update_dial_values()  # fail 1 -> retry in 1s
-    handler._periodic_update_dial_values()  # still cooling down
+    handler._flush('value')  # fail 1 -> retry in 1s
+    handler._flush('value')  # still cooling down
     assert driver.calls == 1
 
     clock[0] = 1001.0
-    handler._periodic_update_dial_values()  # cooldown elapsed
+    handler._flush('value')  # cooldown elapsed
     assert driver.calls == 2
 
 
@@ -97,14 +83,14 @@ def test_value_marked_unresponsive_after_max_failures(monkeypatch):
 
     for _ in range(ServerDialHandler.BACKLIGHT_MAX_FAILURES):
         clock[0] += 100  # always past the current cooldown
-        handler._periodic_update_dial_values()
+        handler._flush('value')
 
     assert driver.calls == ServerDialHandler.BACKLIGHT_MAX_FAILURES
     assert handler.dials['AAA']['value_unresponsive'] is True
 
     # Once latched, further polls leave the driver alone.
     clock[0] += 100
-    handler._periodic_update_dial_values()
+    handler._flush('value')
     assert driver.calls == ServerDialHandler.BACKLIGHT_MAX_FAILURES
 
 
@@ -112,11 +98,11 @@ def test_value_success_resets_backoff_state(monkeypatch):
     clock = _fake_clock(monkeypatch)
     handler = _handler(_CountingValueDriver([False, False, True]))
 
-    handler._periodic_update_dial_values()  # fail 1
+    handler._flush('value')  # fail 1
     clock[0] += 100
-    handler._periodic_update_dial_values()  # fail 2
+    handler._flush('value')  # fail 2
     clock[0] += 100
-    updated = handler._periodic_update_dial_values()  # success
+    updated = handler._flush('value')  # success
 
     assert updated == 1
     d = handler.dials['AAA']
@@ -142,7 +128,7 @@ def test_requesting_same_value_rearms_unresponsive_dial(monkeypatch):
     assert d['value_unresponsive'] is False
     assert d['value_fail_count'] == 0
 
-    handler._periodic_update_dial_values()
+    handler._flush('value')
     assert driver.calls == 1
 
 

@@ -86,7 +86,7 @@ def test_backlight_write_nakked_by_hub_returns_false():
     driver.lock = Lock()
     driver.port_info = _FakePortInfo()
     driver.port = _NakHub()
-    driver.dials = {0: {'index': '0', 'uid': 'AAA', 'value': 0, 'rgbw': [0, 0, 0, 0]}}
+    driver.dials = {0: 'AAA'}
 
     assert driver.dial_set_backlight(0, 100, 0, 0, 0) is False, (
         "hub NAK must surface as a failed write so the handler retries it")

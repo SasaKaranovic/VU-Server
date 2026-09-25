@@ -3,8 +3,6 @@
 Covered defects:
   #1 Device_Set_Image `force` flag was dead (string arg compared with `is True`).
   #2 DialSerialDriver.dial_set_backlight crashed (KeyError) on an unknown dial.
-  #3 dial_multiple_set_percent passed the value into set_dial's UID slot and
-     never recorded it in the dial cache.
   #5 DialsDB.api_update_master never committed the master-key row.
 """
 import sqlite3
@@ -55,29 +53,6 @@ def test_dial_set_backlight_unknown_dial_returns_false_without_crashing():
     assert driver.dial_set_backlight('9', 1, 2, 3, 4) is False
 
 
-# -- #3: dial_multiple_set_percent records values in the cache ----------------
-
-def test_dial_multiple_set_percent_caches_values():
-    driver = _bare_driver()
-    driver.dials = {
-        0: {'index': '0', 'uid': 'AAA', 'value': 0},
-        1: {'index': '1', 'uid': 'BBB', 'value': 0},
-    }
-    sent = {}
-
-    def fake_send(*args, **kwargs):  # pragma: no cover - trivial stub
-        sent['called'] = True
-        return True
-
-    driver._sendCommand = fake_send
-
-    driver.dial_multiple_set_percent([0, 1], [42, 77])
-
-    assert driver.dials[0]['value'] == 42
-    assert driver.dials[1]['value'] == 77
-    assert sent.get('called') is True
-
-
 # -- #5: api_update_master commits -------------------------------------------
 
 def test_api_update_master_is_committed(tmp_path):
@@ -122,10 +97,7 @@ def test_provision_dials_returns_dial_info(monkeypatch):
 def test_get_dial_list_rescan_drops_offline_dials():
     driver = _bare_driver()
     # Two dials cached from a previous scan.
-    driver.dials = {
-        0: {'index': '0', 'uid': 'AAA', 'value': 50},
-        1: {'index': '1', 'uid': 'BBB', 'value': 75},
-    }
+    driver.dials = {0: 'AAA', 1: 'BBB'}
 
     # Only index 0 reports online now ("01" = single byte, value 1).
     driver.bus_rescan = lambda: True
@@ -134,9 +106,8 @@ def test_get_dial_list_rescan_drops_offline_dials():
 
     result = driver.get_dial_list(rescan=True)
 
-    uids = {dial['uid'] for dial in result}
-    assert uids == {'AAA'}          # BBB dropped off the bus
-    assert 1 not in driver.dials    # and is gone from the cache
+    assert result == {0: 'AAA'}     # BBB dropped off the bus
+    assert driver.dials == {0: 'AAA'}
 
 
 # -- #8: a failed backlight write must not be marked as delivered -------------
@@ -166,14 +137,14 @@ def test_backlight_flag_stays_set_when_send_fails():
     # must remain pending so the next poll retries it, otherwise the cached
     # RGBW state silently diverges from the hardware.
     handler = _periodic_handler(backlight_send_result=False)
-    updated = handler._periodic_update_dial_backlight()
+    updated = handler._flush('backlight')
     assert updated == 0
     assert handler.dials['AAA']['backlight_changed'] is True
 
 
 def test_backlight_flag_clears_when_send_succeeds():
     handler = _periodic_handler(backlight_send_result=True)
-    updated = handler._periodic_update_dial_backlight()
+    updated = handler._flush('backlight')
     assert updated == 1
     assert handler.dials['AAA']['backlight_changed'] is False
 
@@ -227,14 +198,14 @@ def test_backlight_backoff_skips_retry_during_cooldown(monkeypatch):
     driver = _CountingBacklightDriver(False)
     handler = _backoff_handler(driver)
 
-    handler._periodic_update_dial_backlight()  # attempt 1 -> fail, backoff 1s
+    handler._flush('backlight')  # attempt 1 -> fail, backoff 1s
     assert driver.calls == 1
     assert handler.dials['AAA']['backlight_fail_count'] == 1
     assert handler.dials['AAA']['backlight_retry_after'] == 1001.0
     assert handler.dials['AAA']['backlight_changed'] is True
 
     # No time has passed: still cooling down, driver must not be called again.
-    handler._periodic_update_dial_backlight()
+    handler._flush('backlight')
     assert driver.calls == 1
 
 
@@ -243,11 +214,11 @@ def test_backlight_backoff_retries_after_cooldown(monkeypatch):
     driver = _CountingBacklightDriver(False)
     handler = _backoff_handler(driver)
 
-    handler._periodic_update_dial_backlight()  # fail1 -> retry_after = 1001
+    handler._flush('backlight')  # fail1 -> retry_after = 1001
     assert driver.calls == 1
 
     clock[0] = 1001.0  # cooldown elapsed
-    handler._periodic_update_dial_backlight()  # fail2 -> backoff doubles
+    handler._flush('backlight')  # fail2 -> backoff doubles
     assert driver.calls == 2
     assert handler.dials['AAA']['backlight_fail_count'] == 2
     assert handler.dials['AAA']['backlight_retry_after'] == 1003.0  # +2s
@@ -260,14 +231,14 @@ def test_backlight_marked_unresponsive_after_max_failures(monkeypatch):
 
     for _ in range(ServerDialHandler.BACKLIGHT_MAX_FAILURES):
         clock[0] += 100  # always past the current cooldown
-        handler._periodic_update_dial_backlight()
+        handler._flush('backlight')
 
     assert driver.calls == ServerDialHandler.BACKLIGHT_MAX_FAILURES
     assert handler.dials['AAA']['backlight_unresponsive'] is True
 
     # Once unresponsive, further polls (even past cooldown) stop the driver.
     clock[0] += 100
-    handler._periodic_update_dial_backlight()
+    handler._flush('backlight')
     assert driver.calls == ServerDialHandler.BACKLIGHT_MAX_FAILURES
 
 
@@ -276,11 +247,11 @@ def test_backlight_success_resets_backoff_state(monkeypatch):
     driver = _CountingBacklightDriver([False, False, True])
     handler = _backoff_handler(driver)
 
-    handler._periodic_update_dial_backlight()  # fail1
+    handler._flush('backlight')  # fail1
     clock[0] += 100
-    handler._periodic_update_dial_backlight()  # fail2
+    handler._flush('backlight')  # fail2
     clock[0] += 100
-    updated = handler._periodic_update_dial_backlight()  # success
+    updated = handler._flush('backlight')  # success
 
     assert updated == 1
     d = handler.dials['AAA']
@@ -307,7 +278,7 @@ def test_requeueing_backlight_rearms_unresponsive_dial(monkeypatch):
     assert d['backlight_changed'] is True
 
     # And the next poll actually talks to the driver again.
-    handler._periodic_update_dial_backlight()
+    handler._flush('backlight')
     assert driver.calls == 1
 
 
@@ -330,7 +301,7 @@ def test_dial_set_backlight_uses_bounded_read_timeout():
     # A backlight write should wait a short time for the hub ACK, not the 5s
     # default that freezes the IOLoop when a dial goes silent.
     driver = object.__new__(DialSerialDriver)
-    driver.dials = {0: {'index': '0', 'uid': 'AAA', 'rgbw': [0, 0, 0, 0]}}
+    driver.dials = {0: 'AAA'}
     captured = {}
 
     def fake_txn(payload, read_timeout=None):
@@ -365,5 +336,4 @@ def test_mutable_state_is_not_a_class_attribute(cls, attrs):
 def test_serverconfig_mutable_state_is_not_a_class_attribute():
     # Imported lazily so the test module doesn't require a config/database.
     from server_config import ServerConfig
-    for attr in ('dials', 'api_keys'):
-        assert attr not in vars(ServerConfig)
+    assert 'api_keys' not in vars(ServerConfig)

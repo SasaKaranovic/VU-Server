@@ -7,15 +7,31 @@ from dials.base_logger import logger
 # shipped fallback `img_blank` lives.
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'upload')
 
-# ServerDialHandler Class
-# ---
-# This class handles all the requests coming from the server.
-# It stores update requests (value, backlight, image etc) that are coming from the server API calls.
-# It will also periodically update the dials
-# ---
-# 'periodic_dial_update' function is called periodically from the main server loop
-#
+# Dial record field -> `dials` table column. Easing fields live under
+# record['easing'] and map to `easing_<field>`.
+DB_COLUMNS = {
+    'dial_name': 'dial_name',
+    'fw_hash': 'dial_build_hash',
+    'fw_version': 'dial_fw_version',
+    'hw_version': 'dial_hw_version',
+    'protocol_version': 'dial_protocol_version',
+}
+EASING_FIELDS = ('dial_step', 'dial_period', 'backlight_step', 'backlight_period')
+
+
+def apply_db_row(dial, row):
+    """Copy a `dials` table row's stored info and easing into a dial record."""
+    for field, column in DB_COLUMNS.items():
+        dial[field] = row[column]
+    dial['easing'] = {field: row[f'easing_{field}'] for field in EASING_FIELDS}
+
+
 class ServerDialHandler:
+    """Owns the per-dial records, keyed by UID, and queues API updates for the periodic flush.
+
+    Request handlers queue on the IOLoop thread; periodic_dial_update runs on
+    the serial worker thread.
+    """
     # Retry-backoff for value and backlight writes. A dial that stops ACKing is
     # retried with exponential backoff; after BACKLIGHT_MAX_FAILURES consecutive
     # failures it is marked unresponsive and left alone until it re-appears on a
@@ -42,8 +58,8 @@ class ServerDialHandler:
         logger.debug("Server dial handler up and running.")
 
     def periodic_dial_update(self):
-        self._periodic_update_dial_values()
-        self._periodic_update_dial_backlight()
+        self._flush('value')
+        self._flush('backlight')
         self._periodic_update_dial_images()
 
     def _convert_to_int(self, value):
@@ -57,135 +73,107 @@ class ServerDialHandler:
 
         return value
 
+    def _get_dial(self, dial_uid):
+        """@returns the dial record, or None (logged) if the dial is not on the bus."""
+        dial = self.dials.get(dial_uid)
+        if dial is None:
+            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+        return dial
+
     def _reload_dials(self, rescan=False):
-        # Get dial list from the dial driver (actual list reported from the hub)
+        # The hub addresses dials by bus index; the API uses the UID.
         dials = self.dial_driver.get_dial_list(rescan)
 
         if len(dials)<=0:
             logger.error("No dials connected to the bus!")
             return
 
-        # 1 - Inform config/db what is the list of dials that we currently see
-        # 2 - Update handler information with any information retrieved from the database
-        # dials = self.server_config.append_dial_info_from_db(dials)
-        self.server_config.append_dial_info_from_db(dials)
-
-        # Dial HUB uses indexes to address each dial. On the server side we use UID for flexibility
-        # and also so that we can uniquely identify each dial.
-        # Rebuild from the current bus scan so dials that were unplugged no
-        # longer show up in the API's dial list.
+        # Rebuild from the current bus scan so unplugged dials leave the API's dial list.
         refreshed = {}
-        for dial in dials:
-            dial['value'] = 0
-            dial['backlight'] = {'red':0, 'green':0, 'blue':0, 'white':0 }
-            dial['image_file'] = self._check_upload_for_dial_image(dial['uid'])
-            dial['value_changed'] = False
+        for index, uid in dials.items():
+            dial = {
+                'uid': uid,
+                'index': str(index),
+                'value': 0,
+                'backlight': {'red': 0, 'green': 0, 'blue': 0, 'white': 0},
+                'image_file': self._check_upload_for_dial_image(uid),
+                'value_changed': False,
+                'backlight_changed': True,
+                'image_changed': False,
+            }
+            apply_db_row(dial, self.server_config.dial_fetch_db_info(uid))
             self._clear_delivery_state(dial, 'value')
-            dial['backlight_changed'] = True
             self._clear_delivery_state(dial, 'backlight')
-            dial['image_changed'] = False
-            refreshed[dial['uid']] = dial
+            refreshed[uid] = dial
         self.dials = refreshed
 
     def _send_db_config_to_dials(self):
-        for _, dial in self.dials.items():
-            dial_step = dial['easing']['dial_step']
-            dial_period = dial['easing']['dial_period']
-            backlight_step = dial['easing']['backlight_step']
-            backlight_period = dial['easing']['backlight_period']
-
-            logger.debug(f"Configuring dial `{dial['uid']}`")
-            logger.debug(f"\tDial:{dial_step}% per {dial_period}ms")
-            logger.debug(f"\tBacklight {backlight_step}% {backlight_period}ms")
-            self.dial_set_easing_dial(dial['uid'], step=dial_step, period=dial_period)
-            self.dial_set_easing_backlight(dial['uid'], step=backlight_step, period=backlight_period)
+        for uid, dial in self.dials.items():
+            easing = dial['easing']
+            logger.debug(f"Configuring dial `{uid}`")
+            logger.debug(f"\tDial:{easing['dial_step']}% per {easing['dial_period']}ms")
+            logger.debug(f"\tBacklight {easing['backlight_step']}% {easing['backlight_period']}ms")
+            for target in ('dial', 'backlight'):
+                self.dial_set_easing(uid, target, step=easing[f'{target}_step'],
+                                     period=easing[f'{target}_period'], persist=False)
 
     def _check_upload_for_dial_image(self, dial_uid):
-        # Always return an absolute path: this value is handed straight to
-        # DialSerialDriver.display_send_image when the dial is re-armed by a
-        # reset. Returning the bare filename made that lookup relative to the
-        # process CWD, so it never found the file and the display -- already
-        # cleared by update_display -- was left blank.
+        # Absolute, because a reset hands it to the driver, which must not resolve it against the CWD.
         filepath = os.path.join(UPLOAD_DIR, f'img_{dial_uid}')
         if os.path.exists(filepath):
             return filepath
 
         return os.path.join(UPLOAD_DIR, 'img_blank')
 
-    # TODO: Update to send multiple/all dial values in one go instead one-by-one
-    def _periodic_update_dial_values(self):
+    def _send(self, dial, kind, value):
+        index = dial['index']
+        if kind == 'value':
+            return self.dial_driver.dial_single_set_percent(index, value)
+        return self.dial_driver.dial_set_backlight(index, value['red'], value['green'],
+                                                   value['blue'], value['white'])
+
+    def _flush(self, kind):
+        """Send each dial's pending `kind` ('value' or 'backlight') that is not backing off.
+
+        @returns the number of dials updated
+        """
         updated = 0
         now = time()
-        for _, dial in self.dials.items():
-            if not dial['value_changed']:
+        for dial in self.dials.values():
+            if not dial[f'{kind}_changed'] or self._delivery_blocked(dial, kind, now):
                 continue
 
-            if self._delivery_blocked(dial, 'value', now):
+            # _queue replaces dial[kind] rather than mutating it, so this snapshot
+            # is what went out even if the IOLoop queues a newer value mid-send.
+            sent = dial[kind]
+            # A NAK or timeout leaves the change pending, with backoff.
+            if not self._send(dial, kind, sent):
+                self._note_delivery_failure(dial, kind, now)
                 continue
 
-            # Snapshot what we send. Request handlers on the IOLoop thread
-            # can queue a newer value while this call is on the bus; the
-            # pending flag may only be cleared if the cache still holds
-            # exactly what went out, otherwise the newer value is lost --
-            # and can't even be re-requested, because dial_set_percent
-            # short-circuits on "cache already equals requested".
-            value = dial['value']
-            sent = self.dial_driver.dial_single_set_percent(dial['index'], value)
-
-            # A NAK or timeout must leave the change pending (with backoff),
-            # not be silently recorded as delivered.
-            if not sent:
-                self._note_delivery_failure(dial, 'value', now)
-                continue
-
-            if dial['value'] == value:
-                dial['value_changed'] = False
-            self._clear_delivery_state(dial, 'value')
-            updated = updated+1
-        if updated>0:
-            logger.debug(f"Updated {updated} dial values.")
+            # Clearing the flag over a value queued mid-send would lose it for good.
+            if dial[kind] == sent:
+                dial[f'{kind}_changed'] = False
+            self._clear_delivery_state(dial, kind)
+            updated += 1
+        if updated:
+            logger.debug(f"Updated {updated} dial {kind}(s).")
         return updated
 
-    def _periodic_update_dial_backlight(self):
-        updated = 0
-        now = time()
-        for _, dial in self.dials.items():
-            if not dial['backlight_changed']:
-                continue
+    def _queue(self, dial, kind, new):
+        # Short-circuit only once delivered: a pending or unresponsive dial is
+        # not at this value yet, so a repeat request must re-arm the write.
+        if (dial[kind] == new
+                and not dial[f'{kind}_changed']
+                and not dial[f'{kind}_unresponsive']):
+            logger.debug(f"Dial {dial['uid']} {kind} already at {new}")
+            return
 
-            if self._delivery_blocked(dial, 'backlight', now):
-                continue
-
-            # Snapshot the colour we send. dial_set_backlight() on the IOLoop
-            # thread replaces dial['backlight'] with a new dict (never mutates
-            # it in place), so this reference stays exactly what went out even
-            # if a newer colour is queued while we're on the bus.
-            colour = dial['backlight']
-            sent = self.dial_driver.dial_set_backlight(dial['index'],
-                                                colour['red'],
-                                                colour['green'],
-                                                colour['blue'],
-                                                colour['white']
-                                                )
-            # Only mark the update as delivered if the driver confirmed the
-            # write. Clearing the flag on a failed send would leave the cached
-            # RGBW state out of sync with the hardware, and the "already at
-            # value" short-circuit in dial_set_backlight() would then block
-            # re-sending the same colour indefinitely.
-            if not sent:
-                self._note_delivery_failure(dial, 'backlight', now)
-                continue
-
-            # Only mark delivered if nothing newer was queued mid-send;
-            # otherwise leave the flag set so the next poll pushes the new
-            # colour instead of silently dropping it.
-            if dial['backlight'] == colour:
-                dial['backlight_changed'] = False
-            self._clear_delivery_state(dial, 'backlight')
-            updated = updated+1
-        if updated>0:
-            logger.debug(f"Updated {updated} dial backlight(s).")
-        return updated
+        logger.debug(f"Queueing dial {dial['uid']} {kind} update to {new}")
+        dial[kind] = new
+        dial[f'{kind}_changed'] = True
+        # A fresh request gets a clean attempt.
+        self._clear_delivery_state(dial, kind)
 
     # -- Shared retry/backoff bookkeeping for value and backlight writes -------
     # `kind` is 'value' or 'backlight'; state lives in dial['<kind>_fail_count'],
@@ -227,9 +215,6 @@ class ServerDialHandler:
                 self.dial_driver.update_display(device=dial['index'], imageFile=dial['image_file'])
                 dial['image_changed'] = False
 
-    def _dial_exists(self, dial_uid):
-        return dial_uid in self.dials
-
     def provision_dials(self, num_attempts = 3):
         logger.debug(f"Provisioning new dials (with {num_attempts} attempts)")
         for _ in range(num_attempts):
@@ -269,12 +254,12 @@ class ServerDialHandler:
         a single dial whose backlight got stuck in a latched/backoff state
         without disturbing the rest of the bus.
         """
-        if not self._dial_exists(dial_uid):
-            logger.error(f"reset_device: dial {dial_uid} does not exist.")
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
         logger.info(f"Software-resetting dial {dial_uid}")
-        self._rearm_dial(self.dials[dial_uid])
+        self._rearm_dial(dial)
         return True
 
     def _rearm_dial(self, dial):
@@ -292,179 +277,106 @@ class ServerDialHandler:
         return self.dials
 
     def dial_set_percent(self, dial_uid, value):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
-        value = self._convert_to_int(value)
-        value = max(0, min(value, 100))
-
-        dial = self.dials[dial_uid]
-
-        # Only short-circuit when the value has actually been delivered. If a
-        # change is still pending or the dial was latched unresponsive, the
-        # hardware is not at this value yet, so re-requesting it must re-arm
-        # the write instead of being silently dropped.
-        if (dial['value'] == value
-                and not dial['value_changed']
-                and not dial['value_unresponsive']):
-            logger.debug(f"Dial {dial_uid} already at {value}")
-            return True
-
-        logger.debug(f"Queueing dial {dial_uid} value update to {value}")
-        dial['value'] = value
-        dial['value_changed'] = True
-        # A fresh request clears any prior backoff / unresponsive state so the
-        # dial gets a clean attempt.
-        self._clear_delivery_state(dial, 'value')
+        self._queue(dial, 'value', max(0, min(self._convert_to_int(value), 100)))
         return True
 
     # Debug function, mainly used for dial offset/calibration
     def dial_set_raw(self, dial_uid, value):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
-        value = self._convert_to_int(value)
-        self.dial_driver.dial_single_set_raw(self.dials[dial_uid]['index'], value)
+        self.dial_driver.dial_single_set_raw(dial['index'], self._convert_to_int(value))
         return True
-
 
     # Debug function, mainly used for dial offset/calibration
     def dial_set_calibration(self, dial_uid, value, fullScale=False):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
-        value = self._convert_to_int(value)
-        self.dial_driver.dial_calibrate(self.dials[dial_uid]['index'], value, fullScale)
+        self.dial_driver.dial_calibrate(dial['index'], self._convert_to_int(value), fullScale)
         return True
 
-    def dial_set_easing_dial(self, dial_uid, step=None, period=None):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+    def dial_set_easing(self, dial_uid, target, step=None, period=None, persist=True):
+        """Send and record the easing for `target`, 'dial' (needle) or 'backlight'.
+
+        @param persist also store the sent fields in the database
+        @returns False if the dial is not on the bus
+        """
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
-        if step is not None:
-            step = self._convert_to_int(step)
-            self.dial_driver.dial_easing_dial_step(self.dials[dial_uid]['index'], step)
+        sent = {}
+        for field, value in ((f'{target}_step', step), (f'{target}_period', period)):
+            if value is None:
+                continue
+            value = self._convert_to_int(value)
+            # Driver setters are dial_easing_<field>, e.g. dial_easing_backlight_step.
+            getattr(self.dial_driver, f'dial_easing_{field}')(dial['index'], value)
+            sent[field] = value
 
-        if period is not None:
-            period = self._convert_to_int(period)
-            self.dial_driver.dial_easing_dial_period(self.dials[dial_uid]['index'], period)
-
-        return True
-
-    def dial_set_easing_backlight(self, dial_uid, step=None, period=None):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
-            return False
-
-        if step is not None:
-            step = self._convert_to_int(step)
-            self.dial_driver.dial_easing_backlight_step(self.dials[dial_uid]['index'], step)
-
-        if period is not None:
-            period = self._convert_to_int(period)
-            self.dial_driver.dial_easing_backlight_period(self.dials[dial_uid]['index'], period)
-
+        dial['easing'] = {**dial['easing'], **sent}
+        if persist and sent:
+            self.server_config.update_dial_db_cell_with_dict(
+                dial_uid, {f'easing_{field}': value for field, value in sent.items()})
         return True
 
     def dial_set_backlight(self, dial_uid, red, green, blue, white):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
-        red = self._convert_to_int(red)
-        green = self._convert_to_int(green)
-        blue = self._convert_to_int(blue)
-        white = self._convert_to_int(white)
-
-        red = max(0, min(red, 100))
-        green = max(0, min(green, 100))
-        blue = max(0, min(blue, 100))
-        white = max(0, min(white, 100))
-
-        new_value = {'red':red, 'green':green, 'blue':blue, 'white':white }
-
-        dial = self.dials[dial_uid]
-
-        # Only short-circuit when the value has actually been delivered. If a
-        # change is still pending or the dial was marked unresponsive, the
-        # hardware is not at this colour yet, so re-requesting it must re-arm the
-        # write instead of being silently dropped.
-        if (dial['backlight'] == new_value
-                and not dial['backlight_changed']
-                and not dial['backlight_unresponsive']):
-            logger.debug(f"Dial {dial_uid} already at {red}:{green}:{blue}:{white}")
-            return True
-
-        logger.debug(f"Queueing dial {dial_uid} RGBW update to {red}:{green}:{blue}:{white}")
-        dial['backlight'] = {'red':red, 'green':green, 'blue':blue, 'white':white }
-        dial['backlight_changed'] = True
-        # A fresh request clears any prior backoff / unresponsive state so the
-        # dial gets a clean attempt.
-        self._clear_delivery_state(dial, 'backlight')
+        # Always a new dict: _flush relies on dial['backlight'] never being mutated in place.
+        colour = {name: max(0, min(self._convert_to_int(level), 100))
+                  for name, level in (('red', red), ('green', green), ('blue', blue), ('white', white))}
+        self._queue(dial, 'backlight', colour)
         return True
 
     def dial_set_image(self, dial_uid, image_file):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
         logger.debug(f"Queueing dial {dial_uid} background image to {image_file}")
-        self.dials[dial_uid]['image_file'] = image_file
-        self.dials[dial_uid]['image_changed'] = True
+        dial['image_file'] = image_file
+        dial['image_changed'] = True
+        return True
+
+    def dial_set_name(self, dial_uid, name):
+        """Store a dial's friendly name.
+
+        @returns False if the dial is not on the bus or has no database row
+        """
+        dial = self._get_dial(dial_uid)
+        if dial is None or not self.server_config.update_dial_db_cell_with_dict(dial_uid, {'dial_name': name}):
+            return False
+
+        dial['dial_name'] = name
         return True
 
     def dial_reload_info_from_hardware(self, dial_uid):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
+        dial = self._get_dial(dial_uid)
+        if dial is None:
             return False
 
-        deviceIndex = int(self.dials[dial_uid]['index'])
+        index = int(dial['index'])
+        info = {
+            'fw_hash': self.dial_driver.dial_get_fw_hash(index),
+            'fw_version': self.dial_driver.dial_get_fw_version(index),
+            'hw_version': self.dial_driver.dial_get_hw_version(index),
+            'protocol_version': self.dial_driver.dial_get_protocol_version(index),
+        }
+        easing = self.dial_driver.dial_easing_get_config(index)
 
-        fw_hash = self.dial_driver.dial_get_fw_hash(deviceIndex)
-        fw_version = self.dial_driver.dial_get_fw_version(deviceIndex)
-        hw_version = self.dial_driver.dial_get_hw_version(deviceIndex)
-        protocol_version = self.dial_driver.dial_get_protocol_version(deviceIndex)
-        deviceEasing = self.dial_driver.dial_easing_get_config(deviceIndex)   # Read dial easing config
-
-        self.dials[dial_uid]['fw_hash'] = fw_hash
-        self.dials[dial_uid]['fw_version'] = fw_version
-        self.dials[dial_uid]['hw_version'] = hw_version
-        self.dials[dial_uid]['protocol_version'] = protocol_version
-        self.dials[dial_uid]['easing']['dial_step'] = deviceEasing['dial_step']
-        self.dials[dial_uid]['easing']['dial_period'] = deviceEasing['dial_period']
-        self.dials[dial_uid]['easing']['backlight_step'] = deviceEasing['backlight_step']
-        self.dials[dial_uid]['easing']['backlight_period'] = deviceEasing['backlight_period']
-
-        self.server_config.update_dial_db_cell(dial_uid, 'dial_build_hash', fw_hash)
-        self.server_config.update_dial_db_cell(dial_uid, 'dial_fw_version', fw_version)
-        self.server_config.update_dial_db_cell(dial_uid, 'dial_hw_version', hw_version)
-        self.server_config.update_dial_db_cell(dial_uid, 'dial_protocol_version', protocol_version)
-        self.server_config.update_dial_db_cell(dial_uid, 'easing_dial_step', deviceEasing['dial_step'])
-        self.server_config.update_dial_db_cell(dial_uid, 'easing_dial_period', deviceEasing['dial_period'])
-        self.server_config.update_dial_db_cell(dial_uid, 'easing_backlight_step', deviceEasing['backlight_step'])
-        self.server_config.update_dial_db_cell(dial_uid, 'easing_backlight_period', deviceEasing['backlight_period'])
-
-        return self.dials[dial_uid]
-
-
-    def dial_reload_info_from_database(self, dial_uid):
-        if not self._dial_exists(dial_uid):
-            logger.error(f"Dial {dial_uid} does not exist in dial list.")
-            return False
-
-        dial_info = self.server_config.dial_fetch_db_info(dial_uid)
-
-        self.dials[dial_uid]['fw_hash'] = dial_info['dial_build_hash']
-        self.dials[dial_uid]['fw_version'] = dial_info['dial_fw_version']
-        self.dials[dial_uid]['hw_version'] = dial_info['dial_hw_version']
-        self.dials[dial_uid]['protocol_version'] = dial_info['dial_protocol_version']
-        self.dials[dial_uid]['easing']['dial_step'] = dial_info['easing_dial_step']
-        self.dials[dial_uid]['easing']['dial_period'] = dial_info['easing_dial_period']
-        self.dials[dial_uid]['easing']['backlight_step'] = dial_info['easing_backlight_step']
-        self.dials[dial_uid]['easing']['backlight_period'] = dial_info['easing_backlight_period']
-
-        return self.dials[dial_uid]
+        dial.update(info)
+        dial['easing'] = easing
+        row = {DB_COLUMNS[field]: value for field, value in info.items()}
+        row.update({f'easing_{field}': easing[field] for field in EASING_FIELDS})
+        self.server_config.update_dial_db_cell_with_dict(dial_uid, row)
+        return dial

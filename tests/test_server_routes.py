@@ -9,7 +9,6 @@ import server
 
 DIAL = {
     'uid': 'ABC123', 'index': '0', 'dial_name': 'Test Dial', 'value': 42,
-    'rgbw': [1, 2, 3, 4],
     'backlight': {'red': 1, 'green': 2, 'blue': 3, 'white': 4},
     'image_file': '/upload/img_blank',
     'easing': {'dial_step': 5, 'dial_period': 50, 'backlight_step': 5, 'backlight_period': 50},

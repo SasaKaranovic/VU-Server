@@ -14,7 +14,6 @@ class ServerConfig:
         self.config_path = os.path.join(os.path.dirname(__file__), config_file)
         self.server = None
         self.hardware = None
-        self.dials = {}
         self.database = None
 
         logger.info(f"VU1 config yaml file: {self.config_path}")
@@ -61,42 +60,13 @@ class ServerConfig:
             logger.info(f"Config `{name}` has no {', '.join(missing)}; using defaults.")
         return {**defaults, **section}
 
-    def update_dial_db_cell(self, dial_uid, cell, value):
-        try:
-            ret = self.database.dial_update_cell(dial_uid=dial_uid, cell=cell, value=value)
-            if ret:
-                self.dials[dial_uid][cell] = value
-                return True
-            return False
-        except Exception as e:
-            logger.error(e)
-            return False
-
     def update_dial_db_cell_with_dict(self, dial_uid, values_dict):
+        """@returns: True if the dial has a database row, which was updated."""
         try:
-            self.database.dial_update_cell_with_dict(dial_uid=dial_uid, values_dict=values_dict)
+            return self.database.dial_update_cell_with_dict(dial_uid=dial_uid, values_dict=values_dict)
         except Exception as e:
             logger.error(e)
-            return
-
-    # Read dial information stored in the DB and append to existing list
-    def append_dial_info_from_db(self, dial_list):
-        for key, dial in enumerate(dial_list):
-            dial_info = self.database.fetch_dial_info_or_create_default(dial['uid'])
-
-            dial_list[key]['dial_name'] = dial_info['dial_name']
-            dial_list[key]['fw_hash'] = dial_info['dial_build_hash']
-            dial_list[key]['fw_version'] = dial_info['dial_fw_version']
-            dial_list[key]['hw_version'] = dial_info['dial_hw_version']
-            dial_list[key]['protocol_version'] = dial_info['dial_protocol_version']
-            dial_list[key]['easing']['dial_step'] = dial_info['easing_dial_step']
-            dial_list[key]['easing']['dial_period'] = dial_info['easing_dial_period']
-            dial_list[key]['easing']['backlight_step'] = dial_info['easing_backlight_step']
-            dial_list[key]['easing']['backlight_period'] = dial_info['easing_backlight_period']
-
-            self.dials[dial['uid']] = dial
-
-        return dial_list
+            return False
 
     def dial_fetch_db_info(self, dial_uid):
         return self.database.fetch_dial_info_or_create_default(dial_uid)

@@ -69,7 +69,7 @@ def _hub_driver():
     driver.lock = Lock()
     driver.port_info = _FakePortInfo()
     driver.port = _FakeHub()
-    driver.dials = {0: {'index': '0', 'uid': 'AAA', 'value': 0, 'rgbw': [0, 0, 0, 0]}}
+    driver.dials = {0: 'AAA'}
     return driver
 
 

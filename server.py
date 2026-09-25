@@ -312,7 +312,7 @@ class Dial_Set_Dial_Name(BaseHandler):
         if not re.fullmatch(r"[A-Za-z0-9_ -]*", new_name):
             return self.send_response(status='fail', message='Invalid characters! Only `A-Z`, `0-9`, `-`, `_` and space allowed.', status_code=400)
 
-        if self.config.update_dial_db_cell(dial_uid=gaugeUID, cell='dial_name', value=new_name):
+        if self.handler.dial_set_name(gaugeUID, new_name):
             return self.send_response(status='ok', status_code=201)
         return self.send_response(status='fail', message='Can not update dial name! Dial does not exist?', status_code=406)
 
@@ -339,13 +339,13 @@ class Dial_Set_Calibration(BaseHandler):
             return self.send_response(status='ok', message="Calibration value updated", status_code=201)
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
-class Dial_Set_Easing_Dial(BaseHandler):
+class Dial_Set_Easing(BaseHandler):
     auth = 'dial'
 
-    async def get(self, gaugeUID):
+    async def get(self, gaugeUID, target):
         step = self.get_argument('step', None)
         period = self.get_argument('period', None)
-        logger.debug(f"Request:SET_EASING_DIAL - Device:{gaugeUID} Step:{step} Period:{period}")
+        logger.debug(f"Request:SET_EASING_{target.upper()} - Device:{gaugeUID} Step:{step} Period:{period}")
 
         if step is None and period is None:
             return self.send_response(status='fail', message="Please provide at least one of required parameters (`step` or `period`)", status_code=400)
@@ -356,53 +356,9 @@ class Dial_Set_Easing_Dial(BaseHandler):
         except (TypeError, ValueError):
             return self.send_response(status='fail', message="`step` and `period` must be integers.", status_code=400)
 
-        if await self.run_blocking(self.handler.dial_set_easing_dial, dial_uid=gaugeUID, step=step, period=period):
-            values_dict = {}
-            if step is not None:
-                values_dict['easing_dial_step'] = step
-            if period is not None:
-                values_dict['easing_dial_period'] = period
-            self.config.update_dial_db_cell_with_dict(gaugeUID, values_dict)
-            self.handler.dial_reload_info_from_database(gaugeUID)
+        if await self.run_blocking(self.handler.dial_set_easing, gaugeUID, target, step=step, period=period):
             return self.send_response(status='ok')
         return self.send_response(status='fail', message="Device not present", status_code=406)
-
-class Dial_Set_Easing_Backlight(BaseHandler):
-    auth = 'dial'
-
-    async def get(self, gaugeUID):
-        step = self.get_argument('step', None)
-        period = self.get_argument('period', None)
-        logger.debug(f"Request:SET_EASING_BACKLIGHT - Device:{gaugeUID} Step:{step} Period:{period}")
-
-        if step is None and period is None:
-            return self.send_response(status='fail', message="Please provide at least one of required parameters (`step` or `period`)", status_code=400)
-
-        try:
-            step = None if step is None else int(step)
-            period = None if period is None else int(period)
-        except (TypeError, ValueError):
-            return self.send_response(status='fail', message="`step` and `period` must be integers.", status_code=400)
-
-        if await self.run_blocking(self.handler.dial_set_easing_backlight, dial_uid=gaugeUID, step=step, period=period):
-            values_dict = {}
-            if step is not None:
-                values_dict['easing_backlight_step'] = step
-            if period is not None:
-                values_dict['easing_backlight_period'] = period
-            self.config.update_dial_db_cell_with_dict(gaugeUID, values_dict)
-            self.handler.dial_reload_info_from_database(gaugeUID)
-            return self.send_response(status='ok')
-        return self.send_response(status='fail', message="Device not present", status_code=406)
-
-class Dial_Get_Easing_Config(BaseHandler):
-    auth = 'dial'
-
-    def get(self, gaugeUID):
-        logger.debug(f"Request:GET_EASING_CONFIG - Device:{gaugeUID}")
-
-        # TODO: Implement in dial handler
-        return self.send_response(status='ok', message="not supported yet")
 
 # -- Keys --
 class Admin_Keys_List(BaseHandler):
@@ -483,9 +439,7 @@ def make_routes(handlers_config):
         (r"/api/v0/dial/([0-9A-F]*?)/reload", Dial_Reload_Device_Info, handlers_config),
         (r"/api/v0/dial/([0-9A-F]*?)/reset", Dial_Reset_Device, handlers_config),
         (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, handlers_config),
-        (r"/api/v0/dial/([0-9A-F]*?)/easing/dial", Dial_Set_Easing_Dial, handlers_config),
-        (r"/api/v0/dial/([0-9A-F]*?)/easing/backlight", Dial_Set_Easing_Backlight, handlers_config),
-        (r"/api/v0/dial/([0-9A-F]*?)/easing/get", Dial_Get_Easing_Config, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/easing/(dial|backlight)", Dial_Set_Easing, handlers_config),
         (r"/api/v0/admin/keys/list", Admin_Keys_List, handlers_config),
         (r"/api/v0/admin/keys/create", Admin_Keys_Create, handlers_config),
         (r"/api/v0/admin/keys/remove", Admin_Keys_Remove, handlers_config),
@@ -550,7 +504,7 @@ class Dial_API_Service:
         try:
             for dial in self.dial_driver.dials:
                 logger.debug(f"Shutting down dial {dial}")
-                self.dial_driver.set_dial(dialID=dial, value=0)
+                self.dial_driver.dial_single_set_percent(dial, 0)
                 self.dial_driver.dial_set_backlight(device=dial, red=0, green=0, blue=0, white=0)
 
         except Exception as e:

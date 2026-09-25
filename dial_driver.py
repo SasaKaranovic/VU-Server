@@ -19,7 +19,7 @@ class DialSerialDriver(SerialHardware):
 
     def __init__(self, port_info):
         super().__init__(port_info, timeout=2)
-        self.dials = {}
+        self.dials = {}  # bus index -> UID, from the last rescan
 
     def _sendCommand(self, cmd, dataType, *data, read_timeout=DEFAULT_READ_TIMEOUT):
         """
@@ -90,6 +90,7 @@ class DialSerialDriver(SerialHardware):
         return self._sendCommand(hub_commands.COMM_CMD_RESCAN_BUS, hub_data_types.COMM_DATA_NONE)
 
     def get_dial_list(self, rescan=False):
+        """@returns {bus index: UID} for the dials found by the last rescan."""
         logger.debug(f"@get_dial_list(rescan={rescan})")
         if rescan:
             resp = self.bus_rescan()
@@ -97,82 +98,18 @@ class DialSerialDriver(SerialHardware):
             if not resp:
                 logger.error("Invalid response received from COMM_CMD_GET_DEVICES_MAP")
                 logger.error(resp)
-                return []
+                return {}
 
-            resp = textwrap.wrap(resp, 2)
-            onlineDials = []
-            for key, elem in enumerate(resp):
-                if int(elem, 16) == 1:
-                    onlineDials.append(key)
-
+            onlineDials = [key for key, elem in enumerate(textwrap.wrap(resp, 2)) if int(elem, 16) == 1]
             # Rebuild the map from scratch so dials that dropped off the bus
             # since the last scan don't linger as phantom entries.
-            rescanned = {}
-            for dialIndex in onlineDials:
-                deviceUID = self.dial_get_uid(dialIndex)                # Read dial UID
-                # Friendly name will be added from config
-                rescanned[dialIndex] = {
-                                            'index': str(dialIndex),
-                                            'uid': deviceUID,
-                                            'dial_name': 'Not set',
-                                            'value': 0,
-                                            'rgbw': [0, 0, 0, 0],
-                                            'easing': {
-                                                'dial_step': '?',
-                                                'dial_period': '?',
-                                                'backlight_step': '?',
-                                                'backlight_period': '?',
-                                            },
-                                            'fw_hash': '?',
-                                            'fw_version': '?',
-                                            'hw_version': '?',
-                                            'protocol_version': '?',
-                                        }
-            self.dials = rescanned
+            self.dials = {dialIndex: self.dial_get_uid(dialIndex) for dialIndex in onlineDials}
 
-        dialList = []
-        for key, val in self.dials.items():
-            dialList.append(val)
-
-        return dialList
+        return dict(self.dials)
 
     def set_all_dials_to(self, value):
         logger.debug(f"@set_all_dials_to(value={value})")
-        dials = []
-        values = []
-
-        for dial in self.dials:
-            dials.append(dial)
-            values.append(value)
-            self.dials[dial]['value'] = 0
-
-        self.dial_multiple_set_percent(dials, values)
-
-    def set_dial(self, dialID=None, UID=None, value=None, sendCMD=True):
-        if dialID is None and UID is None:
-            logger.error("Both dial ID and UID can't be none!")
-            return {}
-
-        if dialID is None:
-            dialID = self._findDial(UID)
-
-        if dialID is None:
-            logger.error("Dial with UID `{}` is not present.".format(UID))
-            return False
-
-        if sendCMD:
-            self.dial_single_set_percent(dialID, int(value))
-        elif value is not None and self.dials.get(int(dialID)) is not None:
-            # Keep the cached value in sync even when we don't send a command
-            # (e.g. batched via dial_multiple_set_percent).
-            self.dials[int(dialID)]['value'] = int(value)
-        return True
-
-    def _findDial(self, UID):
-        for entry in self.dials:
-            if self.dials[entry]['uid'] == UID:
-                return entry
-        return None
+        self.dial_multiple_set_percent(list(self.dials), [value] * len(self.dials))
 
     def dial_get_uid(self, dialIndex):
         logger.debug(f"@dial_get_uid(dialIndex={dialIndex})")
@@ -236,8 +173,6 @@ class DialSerialDriver(SerialHardware):
 
     def dial_single_set_percent(self, dialID, value):
         logger.debug(f"@dial_single_set_percent(dialID={dialID}, value={value})")
-        if self.dials.get(int(dialID), False):
-            self.dials[int(dialID)]['value'] = value
         # The hub ACKs a percent-set; an unread ACK would be taken as the next command's reply.
         return self._sendCommand(hub_commands.COMM_CMD_SET_DIAL_PERC_SINGLE, hub_data_types.COMM_DATA_KEY_VALUE_PAIR, dialID, value&0xFF, read_timeout=self.DIAL_SET_READ_TIMEOUT)
 
@@ -249,7 +184,6 @@ class DialSerialDriver(SerialHardware):
 
         data = []
         for device, value in zip(devices, values):
-            self.set_dial(dialID=device, value=value, sendCMD=False)
             data += [device, value]
 
         return self._sendCommand(hub_commands.COMM_CMD_SET_DIAL_PERC_MULTIPLE, hub_data_types.COMM_DATA_KEY_VALUE_PAIR, *data)
@@ -335,7 +269,6 @@ class DialSerialDriver(SerialHardware):
         if device not in self.dials:
             logger.error(f"dial_set_backlight: unknown device {device!r}")
             return False
-        self.dials[device]['rgbw'][:] = [red, green, blue, white]
         return self._sendCommand(hub_commands.COMM_CMD_SET_RGB_BACKLIGHT, hub_data_types.COMM_DATA_MULTIPLE_VALUE, device, red, green, blue, white, read_timeout=self.BACKLIGHT_READ_TIMEOUT)
 
     def provision_dials(self):

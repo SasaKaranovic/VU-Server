@@ -54,13 +54,13 @@ def test_backlight_queued_during_send_is_still_delivered():
     handler = _handler(types.SimpleNamespace(dial_set_backlight=send))
     box['handler'] = handler
 
-    handler._periodic_update_dial_backlight()
+    handler._flush('backlight')
     assert sent == [(100, 0, 0, 0)]
     assert handler.dials['AAA']['backlight_changed'] is True, (
         "blue was queued mid-send and its pending flag was wiped")
 
     # The next poll must deliver the colour that was queued mid-send.
-    handler._periodic_update_dial_backlight()
+    handler._flush('backlight')
     assert sent[-1] == (0, 0, 100, 0)
     assert handler.dials['AAA']['backlight_changed'] is False
 
@@ -79,12 +79,12 @@ def test_value_queued_during_send_is_still_delivered():
     handler = _handler(types.SimpleNamespace(dial_single_set_percent=send))
     box['handler'] = handler
 
-    handler._periodic_update_dial_values()
+    handler._flush('value')
     assert sent == [50]
     assert handler.dials['AAA']['value_changed'] is True, (
         "75 was queued mid-send and its pending flag was wiped")
 
-    handler._periodic_update_dial_values()
+    handler._flush('value')
     assert sent[-1] == 75
     assert handler.dials['AAA']['value_changed'] is False
 
@@ -104,7 +104,7 @@ def test_same_colour_requeued_during_send_is_considered_delivered():
     handler = _handler(types.SimpleNamespace(dial_set_backlight=send))
     box['handler'] = handler
 
-    handler._periodic_update_dial_backlight()
+    handler._flush('backlight')
     assert handler.dials['AAA']['backlight_changed'] is False
-    handler._periodic_update_dial_backlight()
+    handler._flush('backlight')
     assert sent == [(100, 0, 0, 0)]
