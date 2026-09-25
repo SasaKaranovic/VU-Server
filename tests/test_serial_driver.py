@@ -1,5 +1,4 @@
 """Tests for SerialHardware.serial_transaction and its read helpers."""
-from threading import Lock
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,12 +6,6 @@ import serial as _serial
 
 import serial_driver
 from serial_driver import SerialHardware
-
-
-class _FakePortInfo:
-    """Stand-in for pyserial's ListPortInfo, for error-message formatting."""
-    name = "FAKE0"
-    description = "fake serial port"
 
 
 class _FakePort:
@@ -39,44 +32,41 @@ class _FakePort:
         return len(data)
 
 
-def _bare_serial(port):
-    """A SerialHardware wired to a fake port, bypassing real serial setup."""
-    s = object.__new__(SerialHardware)
-    s.lock = Lock()
-    s.port_info = _FakePortInfo()
-    s.port = port
-    return s
+@pytest.fixture
+def bare_serial(make_serial):
+    """Build a SerialHardware wired to a fake port."""
+    return lambda port: make_serial(SerialHardware, port)
 
 
-def test_serial_transaction_returns_only_the_fresh_response():
-    s = _bare_serial(_FakePort(stale=b'<99009999STALE\r\n'))
+def test_serial_transaction_returns_only_the_fresh_response(bare_serial):
+    s = bare_serial(_FakePort(stale=b'<99009999STALE\r\n'))
     s.read_until_response = lambda timeout=5: ['<01000000AA']
 
     assert s.serial_transaction('>0100') == ['<01000000AA']
     assert s.port.written == [b'>0100\r\n']
 
 
-def test_stale_line_not_surfaced_when_no_fresh_response_arrives():
+def test_stale_line_not_surfaced_when_no_fresh_response_arrives(bare_serial):
     # A timed-out command must not take a leftover `<...>` line as its reply.
-    s = _bare_serial(_FakePort(stale=b'<99009999STALE\r\n'))
+    s = bare_serial(_FakePort(stale=b'<99009999STALE\r\n'))
 
     assert s.serial_transaction('>0100', read_timeout=0) == []
 
 
-def test_partial_stale_line_is_discarded_without_reading():
+def test_partial_stale_line_is_discarded_without_reading(bare_serial):
     # An unterminated line would otherwise make readline() wait out its timeout.
     port = _FakePort(stale=b'<9900')
     port.readline = MagicMock(side_effect=AssertionError("stale bytes must not be read"))
-    s = _bare_serial(port)
+    s = bare_serial(port)
     s.read_until_response = lambda timeout=5: ['<01000000AA']
 
     assert s.serial_transaction('>0100') == ['<01000000AA']
 
 
-def test_stale_bytes_are_not_logged_as_errors(monkeypatch):
+def test_stale_bytes_are_not_logged_as_errors(monkeypatch, bare_serial):
     fake_logger = MagicMock()
     monkeypatch.setattr(serial_driver, "logger", fake_logger)
-    s = _bare_serial(_FakePort(stale=b'<99\r\n'))
+    s = bare_serial(_FakePort(stale=b'<99\r\n'))
     s.read_until_response = lambda timeout=5: ['<01000000AA']
 
     s.serial_transaction('>0100')
@@ -91,29 +81,29 @@ class _DisconnectPort(_FakePort):
         raise _serial.SerialException("read failed: [Errno 5] Input/output error")
 
 
-def test_handle_serial_read_survives_device_disconnect(monkeypatch):
+def test_handle_serial_read_survives_device_disconnect(monkeypatch, bare_serial):
     # Propagating would kill the serial executor thread; the errno text must still reach the log.
     fake_logger = MagicMock()
     monkeypatch.setattr(serial_driver, "logger", fake_logger)
-    s = _bare_serial(_DisconnectPort())
+    s = bare_serial(_DisconnectPort())
 
     assert s.handle_serial_read() is None
     assert "[Errno 5]" in fake_logger.error.call_args.args[0]
 
 
-def test_read_until_response_logs_no_error_on_successful_read(monkeypatch):
+def test_read_until_response_logs_no_error_on_successful_read(monkeypatch, bare_serial):
     fake_logger = MagicMock()
     monkeypatch.setattr(serial_driver, "logger", fake_logger)
-    s = _bare_serial(_FakePort(stale=b'noise\r\n<01000000AA\r\n'))
+    s = bare_serial(_FakePort(stale=b'noise\r\n<01000000AA\r\n'))
 
     assert s.read_until_response(timeout=1) == ['noise', '<01000000AA']
     assert fake_logger.error.call_count == 0
 
 
-def test_serial_transaction_releases_lock_when_write_fails():
+def test_serial_transaction_releases_lock_when_write_fails(bare_serial):
     port = _FakePort()
     port.write = MagicMock(side_effect=_serial.SerialTimeoutException("Write timeout"))
-    s = _bare_serial(port)
+    s = bare_serial(port)
 
     with pytest.raises(_serial.SerialTimeoutException):
         s.serial_transaction('>0100')

@@ -1,58 +1,28 @@
-"""Hub error statuses must be reported as failures, not silently as success.
-
-The data-type field of a reply is a hex string off the wire and must be parsed
-before comparing it to `hub_data_types.COMM_DATA_STATUS_CODE`. Returned raw,
-a status payload such as `'00000001'` (GAUGE_STATUS_FAIL) is truthy, so a NAK
-would pass as delivered and skip the retry/backoff path.
-"""
-from threading import Lock
-
-from dial_driver import DialSerialDriver
+"""Hub status replies parse to a bool, so a NAK surfaces as a failed write rather than a truthy payload string."""
 
 
-def _driver():
-    """A DialSerialDriver with no serial port."""
-    driver = object.__new__(DialSerialDriver)
-    driver.dials = {}
-    return driver
+def test_ok_status_reply_is_true(bare_driver):
+    assert bare_driver._parseResponse(['<1305000400000000'], expected_cmd=0x13) is True
 
 
-def test_ok_status_reply_is_true():
-    driver = _driver()
-    assert driver._parseResponse(['<1305000400000000'], expected_cmd=0x13) is True
+def test_fail_status_reply_is_false(bare_driver):
+    # GAUGE_STATUS_FAIL
+    assert bare_driver._parseResponse(['<1305000400000001'], expected_cmd=0x13) is False
 
 
-def test_fail_status_reply_is_false():
-    driver = _driver()
-    # GAUGE_STATUS_FAIL: previously came back as the truthy string '00000001'.
-    assert driver._parseResponse(['<1305000400000001'], expected_cmd=0x13) is False
+def test_busy_status_reply_is_false(bare_driver):
+    # GAUGE_STATUS_BUSY
+    assert bare_driver._parseResponse(['<0305000400000002'], expected_cmd=0x03) is False
 
 
-def test_busy_status_reply_is_false():
-    driver = _driver()
-    # GAUGE_STATUS_BUSY: previously came back as the truthy string '00000002'.
-    assert driver._parseResponse(['<0305000400000002'], expected_cmd=0x03) is False
+def test_data_reply_still_returns_payload(bare_driver):
+    # A COMM_DATA_SINGLE_VALUE reply, such as the device map or a UID, keeps its payload.
+    assert bare_driver._parseResponse(['<0702000201'], expected_cmd=0x07) == '01'
 
 
-def test_data_reply_still_returns_payload():
-    driver = _driver()
-    # A non-status reply (here COMM_DATA_SINGLE_VALUE=0x02) must still hand
-    # back its payload untouched -- e.g. the device map or a UID.
-    assert driver._parseResponse(['<0702000201'], expected_cmd=0x07) == '01'
-
-
-def test_malformed_status_payload_is_false():
-    driver = _driver()
-    # A status-code reply with a truncated/garbage payload must not raise.
-    assert driver._parseResponse(['<130500'], expected_cmd=0x13) is False
-    assert driver._parseResponse(['<13050004ZZZZZZZZ'], expected_cmd=0x13) is False
-
-
-# -- end to end through serial_transaction with a NAKing hub ------------------
-
-class _FakePortInfo:
-    name = "FAKE0"
-    description = "fake gauge hub"
+def test_malformed_status_payload_is_false(bare_driver):
+    assert bare_driver._parseResponse(['<130500'], expected_cmd=0x13) is False
+    assert bare_driver._parseResponse(['<13050004ZZZZZZZZ'], expected_cmd=0x13) is False
 
 
 class _NakHub:
@@ -81,11 +51,8 @@ class _NakHub:
         pass
 
 
-def test_backlight_write_nakked_by_hub_returns_false():
-    driver = _driver()
-    driver.lock = Lock()
-    driver.port_info = _FakePortInfo()
-    driver.port = _NakHub()
+def test_backlight_write_nakked_by_hub_returns_false(make_serial):
+    driver = make_serial(port=_NakHub())
     driver.dials = {0: 'AAA'}
 
     assert driver.dial_set_backlight(0, 100, 0, 0, 0) is False, (

@@ -152,3 +152,13 @@ def test_api_key_generate_redraws_on_collision(db):
     db.generate_api_key_str = lambda: next(draws)
 
     assert db.api_key_generate(key_name='New') == 'freshkey12345678'
+
+
+def test_api_update_master_is_committed(db):
+    db.api_update_master('MASTERKEY123')
+
+    # A new connection only sees committed rows.
+    verify = sqlite3.connect(db.database_file)
+    row = verify.execute("SELECT key_uid FROM api_keys WHERE key_name='MASTER_KEY'").fetchone()
+    verify.close()
+    assert row == ('MASTERKEY123',)

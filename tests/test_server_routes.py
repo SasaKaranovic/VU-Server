@@ -1,6 +1,7 @@
-"""Routing and /status response shape for the assembled application."""
+"""Routing, /status response shape and query-flag parsing for the assembled application."""
 import json
 
+import pytest
 import tornado.testing
 import tornado.web
 
@@ -30,6 +31,15 @@ class FakeConfig:
 
     def api_key_has_access_to_dial(self, api_key, gaugeUID):
         return True
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("true", True), ("True", True), ("1", True), ("yes", True), ("on", True), (True, True),
+    ("false", False), ("0", False), ("", False), ("no", False), (False, False),
+])
+def test_arg_is_true_parses_query_string_values(value, expected):
+    # get_argument returns a string when the flag is present, never the True singleton.
+    assert server.BaseHandler._arg_is_true(value) is expected
 
 
 class RoutesTestCase(tornado.testing.AsyncHTTPTestCase):

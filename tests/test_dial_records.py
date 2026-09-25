@@ -151,3 +151,14 @@ def test_empty_rescan_keeps_the_records():
     dials = handler.dials
 
     assert handler.rebuild_dials({}) is dials
+
+
+def test_provision_dials_returns_the_rescan_without_touching_records(monkeypatch):
+    monkeypatch.setattr(server_dial_handler, 'sleep', lambda _seconds: None)
+    handler = object.__new__(ServerDialHandler)
+    handler.dials = {}
+    handler.dial_driver = types.SimpleNamespace(
+        provision_dials=lambda: True, get_dial_list=lambda rescan=False: {0: 'AAA'})
+
+    assert handler.provision_dials(num_attempts=1) == {0: 'AAA'}
+    assert handler.dials == {}

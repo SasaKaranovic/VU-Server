@@ -1,11 +1,4 @@
-"""`server.hostname` from config.yaml must control the listen address.
-
-`run_forever` read the port from config but called `app.listen(port)` with no
-address, so Tornado bound every interface (0.0.0.0) regardless of the
-`hostname: localhost` entry -- while the log line claimed `localhost`. With
-`Access-Control-Allow-Origin: *` and a well-known default master key, that
-exposed dial administration to the whole LAN out of the box.
-"""
+"""`server.hostname` from config.yaml sets the listen address, and an empty hostname binds all interfaces."""
 import types
 
 import pytest
@@ -55,8 +48,7 @@ def test_run_forever_binds_to_configured_hostname(monkeypatch):
 
 
 def test_run_forever_binds_all_interfaces_when_hostname_is_empty(monkeypatch):
-    # An explicitly blank hostname is the documented way to opt in to LAN
-    # access; Tornado treats ''/None as "all interfaces".
+    # Tornado treats an empty address as all interfaces.
     calls = _run(monkeypatch, {
         'hostname': '', 'port': 5340, 'master_key': 'k', 'dial_update_period': 200,
     })
