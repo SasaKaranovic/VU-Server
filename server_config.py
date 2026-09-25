@@ -1,119 +1,65 @@
 # pylint: disable=E1101
+import hmac
 import os
 from ruamel.yaml import YAML
-# import yaml
 from dials.base_logger import logger
-from vu_notifications import show_error_msg, show_warning_msg
+from vu_notifications import notify
 import database as db
 
-class ServerConfig:
-    # Shared, read-only defaults. Callers must copy these before storing them on
-    # an instance so per-instance mutation never leaks back into the defaults.
-    server_default = {'hostname': 'localhost', 'port': 3000, 'communication_timeout': 10, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
-    hardware_default = {'port': None }
+SERVER_DEFAULTS = {'hostname': 'localhost', 'port': 5340, 'dial_update_period': 200, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg'}
+HARDWARE_DEFAULTS = {'port': None}
 
+class ServerConfig:
     def __init__(self, config_file='config.yaml'):
-        # Per-instance state (previously class attributes, which shared a single
-        # mutable dict across every ServerConfig instance).
         self.config_path = os.path.join(os.path.dirname(__file__), config_file)
         self.server = None
         self.hardware = None
         self.dials = {}
-        self.api_keys = {}
         self.database = None
 
         logger.info(f"VU1 config yaml file: {self.config_path}")
         self.database = db.DialsDB(init_if_missing=True)
-        self._load_config()     # Load configuration from .yaml file
-        self._load_API_keys()   # Load API keys from `api_keys` section
+        self._load_config()
+        # key_id 1 always holds the current master key, so a rotated key stops working.
+        self.database.api_update_master(self.server['master_key'])
         self.debug_config()
 
-    # Read .yaml config file
     def _load_config(self):
+        """Load config.yaml, filling missing keys and invalid sections from the defaults.
+
+        An empty `server.hostname` stays empty and means all interfaces.
+        """
+        cfg = {}
         if not os.path.exists(self.config_path):
-            logger.error(f"Can not load config. Config file '{self.config_path}' does not exist!")
-            show_error_msg("Can not find config.yaml", f"Config file '{self.config_path}' is missing!\r\n"\
-                           "Please fix this issue by creating a default config.yaml file in the VU Server directory.\r\n"\
-                           "Using default values for this session.")
-            self._create_default_config()
-            return False
+            notify('error', "Can not find config.yaml", f"Config file '{self.config_path}' is missing!\r\n"\
+                   "Using default values for this session.")
+        else:
+            with open(self.config_path, 'r', encoding="utf-8") as file:
+                cfg = YAML(typ='safe', pure=True).load(file)  # pylint: disable=assignment-from-no-return
+            if not isinstance(cfg, dict):
+                notify('warning', "Invalid config file", f"Config file '{self.config_path}' is empty or corrupt!\r\n"\
+                       "Using default values for this session.")
+                cfg = {}
 
-        yaml = YAML(typ='safe', pure=True)
-        with open(self.config_path, 'r', encoding="utf-8") as file:
-            cfg = yaml.load(file)  # pylint: disable=assignment-from-no-return
+        self.server = self._merge_section(cfg, 'server', SERVER_DEFAULTS)
+        self.hardware = self._merge_section(cfg, 'hardware', HARDWARE_DEFAULTS)
 
-        if cfg is None:
-            show_error_msg("Empty/corrupt config file!", "Config file exists but it is empty or corrupt!\r\n"\
-                           "Using defaul values for this session.")
-            self._create_default_config()
-            return False
+        if self.server['hostname'] is None:
+            self.server['hostname'] = ''
+        if self.server['master_key'] is None or str(self.server['master_key']) == '':
+            raise ValueError(f"Config file '{self.config_path}' has an empty `server.master_key`.")
+        self.server['master_key'] = str(self.server['master_key'])
 
-        # Check that config file meets the minimum requirements
-        if not isinstance(cfg, dict) or 'server' not in cfg or 'hardware' not in cfg:
-            show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
-                             "Must have valid entries for 'server' and 'hardware' configuration!\r\n"\
-                             "Using defaul values for this session.")
-            cfg = {}
-            cfg['server'] = dict(self.server_default)
-            cfg['hardware'] = dict(self.hardware_default)
-
-        elif not isinstance(cfg['server'], dict):
-            show_warning_msg("Invalid server config", f"Config file '{self.config_path}' \r\n"\
-                             "Has invalid `server` config entry.\r\n"\
-                             "Using defaul values for this session.")
-            self._force_default_config()
-            return False
-
-        elif not isinstance(cfg['hardware'], dict):
-            show_warning_msg("Invalid server config", f"Config file '{self.config_path}' \r\n"\
-                             "Has invalid `hardware` config entry.\r\n"\
-                             "Using defaul values for this session.")
-            self._force_default_config()
-            return False
-
-        elif ('hostname' not in cfg['server'] or
-             'port' not in cfg['server'] or
-             'communication_timeout' not in cfg['server'] or
-             'master_key' not in cfg['server']):
-            show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
-                             "must have `hostname`, `port`, `communication_timeout` and `master_key` entries!\r\n"\
-                             "Using defaul values for this session.")
-            self._force_default_config()
-            return False
-
-        elif 'port' not in cfg['hardware']:
-            show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
-                             "must have hardware `port` entry! (it can be left empty)\r\n"\
-                             "Using defaul values for this session.")
-            self._force_default_config()
-            return False
-
-        # Load yaml values
-        self.server = cfg.get('server', dict(self.server_default))
-        self.hardware = cfg.get('hardware', dict(self.hardware_default))
-
-        return True
-
-    def _force_default_config(self):
-        self.server = dict(self.server_default)
-        self.hardware = dict(self.hardware_default)
-
-    def _create_default_config(self):
-        logger.info("Using default config values")
-        self.server = dict(self.server_default)
-        self.hardware = dict(self.hardware_default)
-
-    # Load API keys from config file
-    def _load_API_keys(self):
-        # Make sure .yaml master key exists in the database
-        self.database.api_update_master(self.server['master_key'])
-
-        # Load all API keys from the database
-        self.api_keys = self.database.api_key_list()
-
-    def reload_API_keys(self):
-        # Load all API keys from the database
-        self.api_keys = self.database.api_key_list()
+    def _merge_section(self, cfg, name, defaults):
+        section = cfg.get(name)
+        if not isinstance(section, dict):
+            if cfg:
+                notify('warning', "Invalid config", f"Config file '{self.config_path}' has no valid `{name}` section.\r\n"\
+                       f"Using default `{name}` values for this session.")
+            section = {}
+        elif missing := [key for key in defaults if key not in section]:
+            logger.info(f"Config `{name}` has no {', '.join(missing)}; using defaults.")
+        return {**defaults, **section}
 
     def update_dial_db_cell(self, dial_uid, cell, value):
         try:
@@ -155,16 +101,11 @@ class ServerConfig:
     def dial_fetch_db_info(self, dial_uid):
         return self.database.fetch_dial_info_or_create_default(dial_uid)
 
-    # Print out .yaml config
     def debug_config(self):
-        logger.debug(f"\t Host: {self.server['hostname']}")
         logger.debug("--- Server Config ---")
+        logger.debug(f"\t Host: {self.server['hostname']}")
         logger.debug(f"\t Port: {self.server['port']}")
-        logger.debug(f"\t Serial Timeout: {self.server['communication_timeout']}")
-        logger.debug(f"\t Master Key: {self.server['master_key']}")
-
-        logger.debug("--- API Keys ---")
-        logger.debug(f"\t There are {len(self.api_keys)} API keys loaded")
+        logger.debug(f"\t Dial update period: {self.server['dial_update_period']}")
 
     def get_server_config(self):
         return self.server
@@ -172,63 +113,35 @@ class ServerConfig:
     def get_hardware_config(self):
         return self.hardware
 
-    def create_api_key(self, key_name, priviledges=0):
-        generated_key = self.database.api_key_generate(key_name=key_name, level=priviledges)
-        logger.info(f"Generated API key '{generated_key}' (key_name:'{key_name}', priviledges:'{priviledges}')")
-        self.list_keys(reload=True)
+    def create_api_key(self, key_name):
+        generated_key = self.database.api_key_generate(key_name=key_name)
+        logger.info(f"Generated API key '{generated_key}' (key_name:'{key_name}')")
         return generated_key
 
     def update_api_key(self, key_uid, key_name):
-        # Update key
-        if not self.database.api_key_update(key_uid=key_uid, key_name=key_name):
-            return False
-        return True
+        return self.database.api_key_update(key_uid=key_uid, key_name=key_name)
 
     def delete_api_key(self, key_uid):
-        if not self.database.api_key_delete(key_uid=key_uid):
-            return False
-        self.list_keys(reload=True)
-        return True
+        return self.database.api_key_delete(key_uid=key_uid)
 
-    def list_keys(self, reload=False):
-        if reload:
-            self.api_keys = self.database.api_key_list()
-        return self.api_keys
+    def list_keys(self):
+        return self.database.api_key_list()
 
     def api_key_add_dial_access(self, key, dials):
-        res = self.database.api_key_add_dial_access(key, dials)
-        if res:
-            self.list_keys(reload=True)
-        return res
+        return self.database.api_key_add_dial_access(key, dials)
 
-    # Returns True if provided key is listed as master key
-    # Otherwise return False
     def validate_admin_key(self, key):
-        if not self.is_valid_api_key(key):
-            logger.debug(f"API key `{key}` does not exist")
+        """@returns: True if `key` is the configured master key."""
+        if not isinstance(key, str):
             return False
+        return hmac.compare_digest(key.encode(), self.server['master_key'].encode())
 
-        if self.api_keys[key]['priviledges'] >= 99:
-            return True
-        logger.debug("Key exists but not admin key.")
-        return False
-
-
-    # Returns True if API key existis, otherwise returns False
     def is_valid_api_key(self, key):
-        if key in self.api_keys.keys():
-            return True
-        return False
+        return key is not None and self.database.api_key_get_id(key) is not None
 
-    # Returns True if API key has access to dial UID, otherwise retrns False
     def api_key_has_access_to_dial(self, key, dial):
-        if not self.is_valid_api_key(key):
-            return False
-
-        # Master key has wildcard access
-        if self.api_keys[key]['priviledges'] >= 99:
+        """@returns: True if `key` is the master key or has been granted `dial`."""
+        if self.validate_admin_key(key):
             return True
-
-        if dial in self.api_keys[key]['dials']:
-            return True
-        return False
+        key_id = self.database.api_key_get_id(key) if key is not None else None
+        return key_id is not None and dial in self.database.api_key_get_dial_access(key_id)

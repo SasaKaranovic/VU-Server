@@ -33,7 +33,6 @@ class TestSignalHandler:
 
         fake_loop = RecordingIOLoop()
         with patch.object(server, 'pid_lock'), \
-             patch.object(server, 'show_info_msg'), \
              patch.object(server.IOLoop, 'current', return_value=fake_loop):
             service.signal_handler(signal.SIGINT, None)
 

@@ -14,7 +14,7 @@ from tornado.ioloop import IOLoop, PeriodicCallback
 from dial_driver import DialSerialDriver
 from server_config import ServerConfig
 from server_dial_handler import ServerDialHandler
-from vu_notifications import show_error_msg, show_info_msg, show_warning_msg
+from vu_notifications import notify
 from serial.serialutil import SerialException
 
 BASEDIR_NAME = os.path.dirname(__file__)
@@ -518,14 +518,14 @@ class Admin_Keys_Create(BaseHandler):
 
         key_name    = self.get_argument('name', 'Not set')
         dial_access = self.get_argument('dials', None)
-        priviledges = self.get_argument('priviledges', 1)
 
         if dial_access:
             dials = dial_access.split(';')
         else:
             dials = None
 
-        new_key = self.config.create_api_key(key_name, priviledges)
+        # `priviledges` is ignored; only the configured master key is admin.
+        new_key = self.config.create_api_key(key_name)
 
         if dials:
             self.config.api_key_add_dial_access(new_key, dials)
@@ -636,10 +636,9 @@ class Dial_API_Service(Application):
         else:
             self.serialPort = DialSerialDriver.find_gauge_hub()
             if self.serialPort is None:
-                logger.error("Could not find VU1 Dials Hub. Please make sure it's plugged in and (if necessary) drivers are installed.")
-                show_error_msg("Hub not found", "Could not find VU1 Hub on the USB bus.\r\n"\
-                               "Please make sure it is plugged in and (if necessary) drivers are installed.\r\n"\
-                               "Then restart the VU Server application.\r\nVU server application will close now.")
+                notify('error', "Hub not found", "Could not find VU1 Hub on the USB bus.\r\n"\
+                       "Please make sure it is plugged in and (if necessary) drivers are installed.\r\n"\
+                       "Then restart the VU Server application.\r\nVU server application will close now.")
                 sys.exit(0)
                 # raise Exception("Could not find VU1 Dials Hub. Please make sure it's plugged in and (if necessary) drivers are installed.")
 
@@ -698,7 +697,6 @@ class Dial_API_Service(Application):
     def signal_handler(self, signal, frame):
         pid_lock('server', False)
         print('\r\nYou pressed Ctrl+C!')
-        show_info_msg("CTRL+C", "CTRL+C pressed.\r\nVU Server app will exit now.")  # Remove if becomes annoying
 
         def do_shutdown():
             self.shut_down_dials()
@@ -731,31 +729,15 @@ class Dial_API_Service(Application):
         logger.info("Karanovic Research Dials - Starting API server")
         app = Application(self.handlers, **self.server_settings)
 
-        # Port from config.yaml or default 5340
         server_config = self.config.get_server_config()
-        port = server_config.get('port', 5340)
-        # Bind to the configured hostname. This used to be ignored (bare
-        # `app.listen(port)` binds every interface), so `hostname: localhost`
-        # in config.yaml silently exposed the API -- with a well-known default
-        # master key and CORS `*` -- to the whole LAN. An empty hostname is the
-        # explicit opt-in for all interfaces.
-        hostname = server_config.get('hostname', 'localhost')
-        if hostname is None:
-            hostname = ''
-        master_key = server_config.get('master_key', None)
-        dial_update_period = server_config.get('dial_update_period', 1000)
+        port = server_config['port']
+        # An empty hostname binds all interfaces.
+        hostname = server_config['hostname']
         logger.info(f"VU1 API server is listening on http://{hostname or '0.0.0.0'}:{port}")
         app.listen(port, address=hostname)
 
-        if master_key is not None:
-            logger.info("Master Key is present in config.yaml (or using default)")
-            logger.info(f"Provide '{master_key}' to your main application.")
-            logger.info("to allow it to manage this server and the VU dials.")
-        else:
-            show_error_msg(title='Key missing from config', message='Entry "master_key" is missing from the "config.yaml"!')
-            logger.error("Master Key is MISSING from config.yaml")
-            logger.error("Check your 'config.yaml' or add it manually under 'server' section.")
-            sys.exit(0)
+        logger.info(f"Provide master key '{server_config['master_key']}' to your main application")
+        logger.info("to allow it to manage this server and the VU dials.")
 
         # Run the periodic dial update on the serial worker thread so its
         # blocking serial writes (value/backlight/image, incl. chunked image
@@ -764,7 +746,7 @@ class Dial_API_Service(Application):
             await IOLoop.current().run_in_executor(self.serial_executor,
                                                    self.dial_handler.periodic_dial_update)
 
-        pc = PeriodicCallback(periodic_dial_update, dial_update_period)
+        pc = PeriodicCallback(periodic_dial_update, server_config['dial_update_period'])
         pc.start()
 
         IOLoop.instance().start()
@@ -776,11 +758,11 @@ def main(cmd_args=None):
         Dial_API_Service().run_forever()
     except SerialException:
         logger.exception("VU Dials API service - Serial port access denied")
-        show_warning_msg("Serial Port Access Denied", "VU Server failed to start. Access to serial port denied.\r\nVU Server already running?")
+        notify('warning', "Serial Port Access Denied", "VU Server failed to start. Access to serial port denied.\r\nVU Server already running?")
     except Exception as e:
         logger.exception("VU Dials API service crashed during setup.")
         logger.exception(f"Unhandled exception: ({type(e)}) {e}")
-        show_error_msg("Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
+        notify('error', "Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
     os._exit(0)
 
 if __name__ == '__main__':
