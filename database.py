@@ -1,243 +1,140 @@
 import os
+import secrets
 import sqlite3
-import random
 from threading import RLock
 from dials.base_logger import logger
 
+API_KEY_ALPHABET = 'abcdefghijkmnpqrstuvwxyz0123456789'
+API_KEY_LENGTH = 16
+
+
 class DialsDB:
-    connection = None
-    database_changes = 0
+    def __init__(self, database_file='vudials.db', init_if_missing=True):
+        """Open the database next to this module, creating missing tables.
 
-    def __init__(self, database_file='vudials.db', init_if_missing=False):
-        # Serial I/O is offloaded to a worker thread, and provision/reload
-        # persist dial info to the DB from that thread. Allow cross-thread use
-        # of the connection and serialize every access with a reentrant lock so
-        # concurrent statements from the IOLoop thread and the serial worker
-        # can't collide on the same connection.
+        @param init_if_missing: ignored.
+        """
+        # The serial worker thread also writes here, so the connection is
+        # shared across threads and every statement holds the lock.
         self._lock = RLock()
-        # database_path = os.path.join(os.path.expanduser('~'), 'KaranovicResearch', 'vudials')
-        database_path = os.path.join(os.path.dirname(__file__))
-
-        if not os.path.exists(database_path):
-            os.makedirs(database_path)
-
-        self.database_file =  os.path.join(database_path, database_file)
+        self.database_file = os.path.join(os.path.dirname(__file__), database_file)
         logger.info(f"VU1 Database file: {self.database_file}")
-
-        if not os.path.exists(self.database_file) and not init_if_missing:
-            raise SystemError("Database file does not exist!")
 
         self.connection = sqlite3.connect(self.database_file, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
-
-        if init_if_missing:
-            self._init_database()
+        self._init_database()
 
     # -- Dial
     def fetch_dial_info_or_create_default(self, dial_uid, dial_name='Not set'):
-
-        # check if dial exists
-        res = self._fetch_one_query("SELECT * FROM dials WHERE `dial_uid`=? LIMIT 1", (dial_uid,))
-        if not res:
-            self._insert("INSERT INTO dials (`dial_uid`, `dial_name`) VALUES (?, ?)", (dial_uid, dial_name))
+        if self._exec("INSERT OR IGNORE INTO dials (`dial_uid`, `dial_name`) VALUES (?, ?)", (dial_uid, dial_name)):
             logger.debug(f"Added dial `{dial_uid}` to dial list with friendly name `{dial_name}`")
-            res = self._fetch_one_query("SELECT * FROM dials WHERE `dial_uid`=? LIMIT 1", (dial_uid,))
-
-        return res
+        return self._fetch("SELECT * FROM dials WHERE `dial_uid`=? LIMIT 1", (dial_uid,), one=True)
 
     def dial_update_cell(self, dial_uid, cell, value):
-        logger.debug(f"Updating `{dial_uid}` to `{cell}`='{value}'")
-
-        logger.debug(f"Attempting to update `{dial_uid}` to `{cell}='{value}'")
-        self._insert(f"UPDATE dials SET `{cell}`=? WHERE `dial_uid`=?", (value, dial_uid))
-
-        return self._more_than_one_changed()
+        return self.dial_update_cell_with_dict(dial_uid, {cell: value})
 
     def dial_update_cell_with_dict(self, dial_uid, values_dict):
+        """Update columns of one dial. Keys must be trusted column names.
+
+        @returns: True if the dial row exists.
+        """
         if not isinstance(values_dict, dict):
             logger.error(f"Expecting type(dictionary) but {type(values_dict)} given.")
-            return 0
+            return False
 
-        logger.debug(f"Updating `{dial_uid}` to `{values_dict}'")
-
-        fields = ', '.join(f"`{key}`=?" for key in values_dict.keys())
-        query = f"UPDATE `dials` SET {fields} WHERE `dial_uid`=?"
-        params = list(values_dict.values()) + [dial_uid]
-        logger.debug(query)
-
-        logger.debug(f"Attempting to update `{dial_uid}` to `{values_dict}'")
-        self._insert(query, params)
-
-        return self._more_than_one_changed()
+        logger.debug(f"Updating `{dial_uid}` to `{values_dict}`")
+        fields = ', '.join(f"`{key}`=?" for key in values_dict)
+        params = [*values_dict.values(), dial_uid]
+        return self._exec(f"UPDATE `dials` SET {fields} WHERE `dial_uid`=?", params) > 0
 
     # -- API keys
     def api_key_get_id(self, key):
-        res = self._fetch_one(table='api_keys', cell='key_id', where='key_uid', where_cmp=key, limit=1)
-        if not res:
-            return None
-        return res[0]
+        res = self._fetch("SELECT `key_id` FROM `api_keys` WHERE `key_uid`=? LIMIT 1", (key,), one=True)
+        return res['key_id'] if res else None
 
     def api_key_list(self):
-        api_keys = {}
-        db_keys = self._fetch_all("SELECT * FROM api_keys")
-
-        if not db_keys:
-            return api_keys
-
-        for key in list(db_keys):
-            item = {}
-            item = {'key_name': key['key_name'], 'key_uid': key['key_uid'], 'priviledges': int(key['key_level'])}
-            item['dials'] = self.api_key_get_dial_access(key['key_id'])
-            api_keys[key['key_uid']] = item
-
-        return api_keys
+        return {
+            key['key_uid']: {
+                'key_name': key['key_name'],
+                'key_uid': key['key_uid'],
+                'priviledges': int(key['key_level']),
+                'dials': self.api_key_get_dial_access(key['key_id']),
+            }
+            for key in self._fetch("SELECT * FROM api_keys")
+        }
 
     def api_key_get_dial_access(self, key_id):
-        dials = []
-
-        key_access = self._fetch_all("SELECT `dial_uid` FROM `dial_access` WHERE `key_id`=?", (key_id,))
-
-        if not key_access:
-            return dials
-
-        for item in key_access:
-            dials.append(item['dial_uid'])
-
-        return dials
+        rows = self._fetch("SELECT `dial_uid` FROM `dial_access` WHERE `key_id`=?", (key_id,))
+        return [row['dial_uid'] for row in rows]
 
     def api_key_add_dial_access(self, key, dials):
+        """Replace the set of dials a key may access."""
         key_id = self.api_key_get_id(key)
-        if not key_id:
+        if not key_id or not dials:
             return False
 
-        if not dials:
-            return False
+        with self._lock, self.connection:
+            self.connection.execute("DELETE FROM `dial_access` WHERE `key_id`=?", (key_id,))
+            cursor = self.connection.executemany(
+                "INSERT OR IGNORE INTO `dial_access` (dial_uid, key_id) VALUES (?, ?)",
+                [(dial, key_id) for dial in dials])
+            return cursor.rowcount > 0
 
-        # Wipe any existing entries that key has
-        self._query("DELETE FROM `dial_access` WHERE `key_id`=?", (key_id,))
-
-        # Add dial access
-        for dial in dials:
-            self._insert("INSERT OR IGNORE INTO `dial_access` (dial_uid, key_id) VALUES (?, ?)", (dial, key_id))
-
-        return self._more_than_one_changed()
-
-
-    # Set master key to defined value (used to drive master key from .yaml file into sqlite database)
     def api_update_master(self, new_key):
-        self._insert("INSERT OR REPLACE INTO api_keys (key_id, key_name, key_uid, key_level) VALUES ('1', 'MASTER_KEY', ?, 99)", (new_key,))
-        return self._more_than_one_changed()
+        """Store the config.yaml master key as key_id 1."""
+        return self._exec("INSERT OR REPLACE INTO api_keys (key_id, key_name, key_uid, key_level) VALUES ('1', 'MASTER_KEY', ?, 99)", (new_key,)) > 0
 
     def api_key_generate(self, key_name='Not set', level=1):
-        generated_key = self.generate_api_key_str()
-        while self._fetch_one(table='api_keys', cell='key_id', where='key_uid', where_cmp=generated_key, limit=1):
+        # key_uid is UNIQUE, so a colliding key fails the insert and is redrawn.
+        # Any other integrity error is re-raised so it cannot loop forever.
+        while True:
             generated_key = self.generate_api_key_str()
-
-        # self._insert(f"INSERT INTO api_keys (`key_uid`, `key_name`, `key_level`) VALUES ('{generated_key}', '{key_name}', '{level}')")
-        table_data = { 'key_uid': generated_key, 'key_name': key_name, 'key_level': level }
-        self._insert_dict('api_keys', table_data)
-        if self._more_than_one_changed():
-            return generated_key
-        raise SystemError("Failed to generate and store new API key to database!")
+            try:
+                self._exec("INSERT INTO api_keys (`key_uid`, `key_name`, `key_level`) VALUES (?, ?, ?)",
+                           (generated_key, key_name, level))
+                return generated_key
+            except sqlite3.IntegrityError:
+                if self.api_key_get_id(generated_key) is None:
+                    raise
 
     def generate_api_key_str(self):
-        s = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-                '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-        return ''.join(random.sample(s, 16))
+        return ''.join(secrets.choice(API_KEY_ALPHABET) for _ in range(API_KEY_LENGTH))
 
-    def api_key_update(self, key_uid, key_name=None, level=None):
-        # Find key in DB
-        key_id = self.api_key_get_id(key_uid)
-
-        # Rename key
-        if key_name is not None:
-            if level is not None:
-                self._query("UPDATE `api_keys` SET `key_name`=?, `key_level`=? WHERE `key_id`=?", (key_name, level, key_id))
-            else:
-                self._query("UPDATE `api_keys` SET `key_name`=? WHERE `key_id`=?", (key_name, key_id))
-            return self._more_than_one_changed()
-        return False
+    def api_key_update(self, key_uid, key_name=None):
+        if key_name is None:
+            return False
+        return self._exec("UPDATE `api_keys` SET `key_name`=? WHERE `key_uid`=?", (key_name, key_uid)) > 0
 
     def api_key_delete(self, key_uid):
-        # Make sure we are not deleting master key!
-        res = self._fetch_one_query("SELECT `key_id` FROM `api_keys` WHERE `key_uid`=? AND `key_level` < '99' LIMIT 1", (key_uid,))
-        if not res:
-            return False
-        key_id = res['key_id']
+        """Delete a non-master key and its dial access.
 
-        # Delete the KEY
-        query = "DELETE FROM `api_keys` WHERE `key_id`=?"
-        logger.debug(query)
-        self._query(query, (key_id,))
-        self._commit()
-        if self._more_than_one_changed():
-            # Delete dial access. This may affect zero rows (a key without any
-            # granted dials), so its change count must NOT decide the return
-            # value -- the key itself was already deleted successfully.
-            self._query("DELETE FROM `dial_access` WHERE `key_id`=?", (key_id,))
-            self._commit()
-            self._more_than_one_changed()  # keep the change counter in sync
-
-            return True
-
-        return False
-
+        @returns: True if the key was deleted.
+        """
+        with self._lock, self.connection:
+            self.connection.execute(
+                "DELETE FROM `dial_access` WHERE `key_id` IN "
+                "(SELECT `key_id` FROM `api_keys` WHERE `key_uid`=? AND `key_level` < 99)", (key_uid,))
+            cursor = self.connection.execute(
+                "DELETE FROM `api_keys` WHERE `key_uid`=? AND `key_level` < 99", (key_uid,))
+            return cursor.rowcount > 0
 
     # -- Internal
-    def _insert_dict(self, table_name, dict_data):
+    def _exec(self, sql, params=()):
+        """Run one write statement in its own transaction.
+
+        @returns: the number of rows changed.
+        """
+        with self._lock, self.connection:
+            return self.connection.execute(sql, params).rowcount
+
+    def _fetch(self, sql, params=(), one=False):
         with self._lock:
-            cursor = self.connection.cursor()
-            attrib_names = ", ".join(dict_data.keys())
-            attrib_values = ", ".join("?" * len(dict_data.keys()))
-            sql = f"INSERT INTO {table_name} ({attrib_names}) VALUES ({attrib_values})"
-            cursor.execute(sql, list(dict_data.values()))
-            self._commit()
-
-    def _commit(self):
-        with self._lock:
-            self.connection.commit()
-
-    def _insert(self, query, params=()):
-        with self._lock:
-            self._query(query, params)
-            self.connection.commit()
-
-    def _query(self, query, params=()):
-        with self._lock:
-            cursor = self.connection.cursor()
-            cursor.execute(query, params)
-
-    # `table`, `cell` and `where` are always internal column/table names, never
-    # user-supplied, so it's safe to interpolate them; only `where_cmp` (the
-    # value being compared) needs to go through a bound parameter.
-    def _fetch_one(self, table, cell, where, where_cmp, limit=1):
-        query = f"SELECT {cell} FROM {table} WHERE {where} =? LIMIT {limit}"
-        logger.debug(query)
-        return self._fetch_one_query(query, (where_cmp,))
-
-    def _fetch_one_query(self, query, params=()):
-        with self._lock:
-            cursor = self.connection.cursor()
-            cursor.execute(query, params)
-            return cursor.fetchone()
-
-    def _fetch_all(self, query, params=()):
-        with self._lock:
-            cursor = self.connection.cursor()
-            cursor.execute(query, params)
-            return cursor.fetchall()
-
-
-    def _more_than_one_changed(self):
-        with self._lock:
-            if self.connection.total_changes > self.database_changes:
-                self.database_changes = self.connection.total_changes
-                return True
-            return False
+            cursor = self.connection.execute(sql, params)
+            return cursor.fetchone() if one else cursor.fetchall()
 
     def _init_database(self):
-        # Create DIALS table
-        self._query("""
+        with self._lock, self.connection:
+            self.connection.execute("""
                     CREATE TABLE IF NOT EXISTS dials (
                                                     "dial_id" INTEGER PRIMARY KEY AUTOINCREMENT,
                                                     "dial_uid" TEXT NOT NULL UNIQUE,
@@ -254,8 +151,7 @@ class DialsDB:
                                                   )
                     """)
 
-        # Create API KEYS table
-        self._query("""
+            self.connection.execute("""
                     CREATE TABLE IF NOT EXISTS api_keys (
                                                          key_id INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT ,
                                                          key_name TEXT,
@@ -263,12 +159,9 @@ class DialsDB:
                                                          key_level INTEGER)
                     """)
 
-        # Create DIAL ACCESS table
-        self._query("""
+            self.connection.execute("""
                     CREATE TABLE IF NOT EXISTS dial_access (
                                                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                                                             dial_uid TEXT NOT NULL,
                                                             key_id INTEGER NOT NULL)
                     """)
-
-        self.connection.commit()
