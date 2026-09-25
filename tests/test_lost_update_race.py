@@ -20,19 +20,20 @@ from server_dial_handler import ServerDialHandler
 
 def _handler(driver):
     handler = object.__new__(ServerDialHandler)
-    handler.communication_timeout = 5
     handler.dials = {
         'AAA': {
             'uid': 'AAA',
             'index': '0',
             'value': 50,
             'value_changed': True,
+            'value_fail_count': 0,
+            'value_retry_after': 0,
+            'value_unresponsive': False,
             'backlight': {'red': 100, 'green': 0, 'blue': 0, 'white': 0},
             'backlight_changed': True,
             'backlight_fail_count': 0,
             'backlight_retry_after': 0,
             'backlight_unresponsive': False,
-            'update_deadline': 0,
         }
     }
     handler.dial_driver = driver

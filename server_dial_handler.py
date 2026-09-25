@@ -16,15 +16,11 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'upload')
 # 'periodic_dial_update' function is called periodically from the main server loop
 #
 class ServerDialHandler:
-    communication_timeout = 3
-
     # Retry-backoff for value and backlight writes. A dial that stops ACKing is
     # retried with exponential backoff; after BACKLIGHT_MAX_FAILURES consecutive
     # failures it is marked unresponsive and left alone until it re-appears on a
     # bus rescan or a new value/colour is requested. This keeps one dead dial
     # from spamming the log and blocking the serial bus on every periodic tick.
-    # (Named for backlight, where the scheme was introduced; the same limits
-    # now govern percent-set writes -- see _note_delivery_failure.)
     BACKLIGHT_MAX_FAILURES = 5
     BACKLIGHT_BACKOFF_BASE = 1.0   # seconds
     BACKLIGHT_BACKOFF_MAX = 30.0   # seconds
@@ -32,16 +28,7 @@ class ServerDialHandler:
     def __init__(self, dial_driver, server_config):
         self.dial_driver = dial_driver
         self.server_config = server_config
-
-        # Per-instance state (previously class attributes shared across every
-        # ServerDialHandler instance).
         self.dials = {}
-        self.hub_info = {}
-
-        # Communication timeout
-        cfg = self.server_config.get_server_config()
-        self.communication_timeout = cfg.get('communication_timeout', 3)
-        logger.info(f"Communication timeout set to {self.communication_timeout} seconds")
 
         logger.debug("Retrieving list of dials")
         self._reload_dials(True)
@@ -55,20 +42,9 @@ class ServerDialHandler:
         logger.debug("Server dial handler up and running.")
 
     def periodic_dial_update(self):
-        updated = 0
-        ret=0
-
-        ret = self._periodic_update_dial_values()
-        updated = updated + ret
-
-        ret = self._periodic_update_dial_backlight()
-        updated = updated + ret
-
-        ret = self._periodic_update_dial_images()
-        updated = updated + ret
-
-        if updated <=0:
-            self._periodic_keep_alive()
+        self._periodic_update_dial_values()
+        self._periodic_update_dial_backlight()
+        self._periodic_update_dial_images()
 
     def _convert_to_int(self, value):
         try:
@@ -103,7 +79,6 @@ class ServerDialHandler:
             dial['value'] = 0
             dial['backlight'] = {'red':0, 'green':0, 'blue':0, 'white':0 }
             dial['image_file'] = self._check_upload_for_dial_image(dial['uid'])
-            dial['update_deadline'] = time()
             dial['value_changed'] = False
             self._clear_delivery_state(dial, 'value')
             dial['backlight_changed'] = True
@@ -165,7 +140,7 @@ class ServerDialHandler:
 
             if dial['value'] == value:
                 dial['value_changed'] = False
-            self._note_delivery_success(dial, 'value', now)
+            self._clear_delivery_state(dial, 'value')
             updated = updated+1
         if updated>0:
             logger.debug(f"Updated {updated} dial values.")
@@ -206,7 +181,7 @@ class ServerDialHandler:
             # colour instead of silently dropping it.
             if dial['backlight'] == colour:
                 dial['backlight_changed'] = False
-            self._note_delivery_success(dial, 'backlight', now)
+            self._clear_delivery_state(dial, 'backlight')
             updated = updated+1
         if updated>0:
             logger.debug(f"Updated {updated} dial backlight(s).")
@@ -219,13 +194,13 @@ class ServerDialHandler:
     def _delivery_blocked(self, dial, kind, now):
         # A dial that has exhausted its retries is left alone until it comes
         # back on a rescan or a new request re-arms it.
-        if dial.get(f'{kind}_unresponsive', False):
+        if dial[f'{kind}_unresponsive']:
             return True
         # Still within the backoff window from a previous failure.
-        return now < dial.get(f'{kind}_retry_after', 0)
+        return now < dial[f'{kind}_retry_after']
 
     def _note_delivery_failure(self, dial, kind, now):
-        fail_count = dial.get(f'{kind}_fail_count', 0) + 1
+        fail_count = dial[f'{kind}_fail_count'] + 1
         dial[f'{kind}_fail_count'] = fail_count
         if fail_count >= self.BACKLIGHT_MAX_FAILURES:
             dial[f'{kind}_unresponsive'] = True
@@ -239,10 +214,6 @@ class ServerDialHandler:
             logger.error(f"Failed to update {kind} for dial {dial['uid']}; "
                          f"retrying in {backoff:g}s (attempt {fail_count}).")
 
-    def _note_delivery_success(self, dial, kind, now):
-        self._clear_delivery_state(dial, kind)
-        dial['update_deadline'] = now + self.communication_timeout
-
     @staticmethod
     def _clear_delivery_state(dial, kind):
         dial[f'{kind}_fail_count'] = 0
@@ -250,24 +221,11 @@ class ServerDialHandler:
         dial[f'{kind}_unresponsive'] = False
 
     def _periodic_update_dial_images(self):
-        updated = 0
         for _, dial in self.dials.items():
             if dial['image_changed']:
                 logger.debug("Updating images")
                 self.dial_driver.update_display(device=dial['index'], imageFile=dial['image_file'])
-                dial['update_deadline'] = time() + self.communication_timeout
                 dial['image_changed'] = False
-                updated = updated+1
-        return updated
-
-    def _periodic_keep_alive(self):
-        #FIXME!
-        return
-        # for _, dial in self.dials.items():
-            # if time() >= dial['update_deadline']:
-                # logger.info("Keeping communication alive")
-                # self.dial_driver.dial_send_keep_comm_alive(device=dial['index'])
-                # dial['image_changed'] = False
 
     def _dial_exists(self, dial_uid):
         return dial_uid in self.dials
@@ -327,7 +285,6 @@ class ServerDialHandler:
         dial['image_changed'] = True
         self._clear_delivery_state(dial, 'value')
         self._clear_delivery_state(dial, 'backlight')
-        dial['update_deadline'] = time()
 
     def get_dial_info(self, dial_uid=None):
         if dial_uid is not None:
@@ -350,7 +307,7 @@ class ServerDialHandler:
         # the write instead of being silently dropped.
         if (dial['value'] == value
                 and not dial['value_changed']
-                and not dial.get('value_unresponsive', False)):
+                and not dial['value_unresponsive']):
             logger.debug(f"Dial {dial_uid} already at {value}")
             return True
 
@@ -438,7 +395,7 @@ class ServerDialHandler:
         # write instead of being silently dropped.
         if (dial['backlight'] == new_value
                 and not dial['backlight_changed']
-                and not dial.get('backlight_unresponsive', False)):
+                and not dial['backlight_unresponsive']):
             logger.debug(f"Dial {dial_uid} already at {red}:{green}:{blue}:{white}")
             return True
 

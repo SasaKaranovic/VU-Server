@@ -35,14 +35,15 @@ class _CountingValueDriver:
 
 def _handler(driver):
     handler = object.__new__(ServerDialHandler)
-    handler.communication_timeout = 5
     handler.dials = {
         'AAA': {
             'uid': 'AAA',
             'index': '0',
             'value': 50,
             'value_changed': True,
-            'update_deadline': 0,
+            'value_fail_count': 0,
+            'value_retry_after': 0,
+            'value_unresponsive': False,
         }
     }
     handler.dial_driver = driver

@@ -32,8 +32,7 @@ class TestSignalHandler:
         service.shutdown_server = lambda: calls.append('shutdown_server')
 
         fake_loop = RecordingIOLoop()
-        with patch.object(server, 'pid_lock'), \
-             patch.object(server.IOLoop, 'current', return_value=fake_loop):
+        with patch.object(server.IOLoop, 'current', return_value=fake_loop):
             service.signal_handler(signal.SIGINT, None)
 
         assert calls == [], (

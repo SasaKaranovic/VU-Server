@@ -33,7 +33,6 @@ class _FakeLoop:
 def _service(server_cfg):
     service = object.__new__(server.Dial_API_Service)
     service.handlers = []
-    service.server_settings = {}
     service.serial_executor = None
     service.dial_handler = types.SimpleNamespace(periodic_dial_update=lambda: None)
     service.config = types.SimpleNamespace(get_server_config=lambda: server_cfg)

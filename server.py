@@ -3,11 +3,9 @@ import os
 import signal
 import argparse
 import zlib
-import time
 import re
 import functools
 from concurrent.futures import ThreadPoolExecutor
-from mimetypes import guess_type
 from dials.base_logger import logger, configure_logging
 from tornado.web import Application, RequestHandler, Finish, StaticFileHandler
 from tornado.ioloop import IOLoop, PeriodicCallback
@@ -21,17 +19,10 @@ BASEDIR_NAME = os.path.dirname(__file__)
 BASEDIR_PATH = os.path.abspath(BASEDIR_NAME)
 WEB_ROOT = os.path.join(BASEDIR_PATH, 'www')
 
-def pid_lock(service_name, create=True):
-    file_name = "service.{}.pid.lock".format(service_name)
-    pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), file_name)
-
-    if create:
-        pid = os.getpid()
-        with open(pid_file, "w", encoding="utf-8") as file:
-            file.write(str(pid))
-    else:
-        if os.path.exists(pid_file):
-            os.remove(pid_file)
+# Public fields /status returns; the rest of the dial record is internal state.
+STATUS_FIELDS = ('uid', 'index', 'dial_name', 'value', 'backlight', 'image_file', 'easing',
+                 'fw_hash', 'fw_version', 'hw_version', 'protocol_version',
+                 'value_changed', 'backlight_changed', 'image_changed')
 
 class BaseHandler(RequestHandler):
     def initialize(self, handler, config, executor=None):
@@ -52,15 +43,8 @@ class BaseHandler(RequestHandler):
 
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
-        # self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-        # self.set_header('Access-Control-Allow-Methods', ' PUT, DELETE, OPTIONS, GET')
         self.set_header('Access-Control-Allow-Methods', 'POST, GET')
         self.set_header('Content-Type', 'application/json')
-
-        # self.set_header("Access-Control-Allow-Origin", "Origin");
-        # self.set_header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-        # self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        # self.set_header("Access-Control-Allow-Credentials", "true");
 
     # Helper function to send response
     def send_response(self, status, message='', data=None, status_code=200):
@@ -145,7 +129,7 @@ class Device_Status_Handler(BaseHandler):
 
         dial = self.handler.get_dial_info(dial_uid=dial_uid)
         if dial is not None:
-            return self.send_response(status='ok', data=dial)
+            return self.send_response(status='ok', data={field: dial[field] for field in STATUS_FIELDS})
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.')
 
 class Device_Set_Handler(BaseHandler):
@@ -595,33 +579,42 @@ class Default_404_Handler(RequestHandler):
     # Override prepare() instead of get() to cover all possible HTTP methods.
     def prepare(self):
         self.set_status(404)
-        resp = {'status': 'fail', 'message': 'Unsupported method'}
+        resp = {'status': 'fail', 'message': 'Not found'}
         self.write(resp)
         raise Finish()
 
-class FileHandler(RequestHandler):
-    def get(self, path=None):
-        if path:
-            logger.debug(f"Requesting: {path}")
-            file_location = os.path.join(WEB_ROOT, path)
-        else:
-            file_location = os.path.join(WEB_ROOT, 'index.html')
 
-        if not os.path.isfile(file_location):
-            logger.error(f"Requested file can not be found: {path}")
-            self.set_status(404)
-            resp = {'status': 'fail', 'message': 'Page not found'}
-            self.write(resp)
-            raise Finish()
-        content_type, _ = guess_type(file_location)
-        self.set_header('Content-Type', content_type)
-        with open(file_location, encoding="utf-8") as source_file:
-            self.write(source_file.read())
+def make_routes(handlers_config):
+    """Return the API routes, a JSON 404 for other /api/ paths, and the Web UI."""
+    return [
+        (r"/api/v0/dial/provision", Dial_Provision, handlers_config),
+        (r"/api/v0/dial/reset_all", Dial_Reset_All, handlers_config),
+        (r"/api/v0/dial/list", Dial_Get_List, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/status", Device_Status_Handler, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/set", Device_Set_Handler, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/setRaw", Device_SetRaw_Handler, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/image/set", Device_Set_Image, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/image/get", Dial_Get_Image, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/image/crc", Dial_Get_Image_CRC, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/backlight", Device_Backlight_Handler, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/name", Dial_Set_Dial_Name, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/reload", Dial_Reload_Device_Info, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/reset", Dial_Reset_Device, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/easing/dial", Dial_Set_Easing_Dial, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/easing/backlight", Dial_Set_Easing_Backlight, handlers_config),
+        (r"/api/v0/dial/([0-9A-F]*?)/easing/get", Dial_Get_Easing_Config, handlers_config),
+        (r"/api/v0/admin/keys/list", Admin_Keys_List, handlers_config),
+        (r"/api/v0/admin/keys/create", Admin_Keys_Create, handlers_config),
+        (r"/api/v0/admin/keys/remove", Admin_Keys_Remove, handlers_config),
+        (r"/api/v0/admin/keys/update", Admin_Keys_Update, handlers_config),
+        (r"/api/.*", Default_404_Handler),
+        (r"/(.*)", StaticFileHandler, {'path': WEB_ROOT, 'default_filename': 'index.html'}),
+    ]
 
 
-class Dial_API_Service(Application):
+class Dial_API_Service:
     def __init__(self):
-        pid_lock('server', True)
         signal.signal(signal.SIGTERM, self.signal_handler)
         signal.signal(signal.SIGINT, self.signal_handler)
 
@@ -639,8 +632,7 @@ class Dial_API_Service(Application):
                 notify('error', "Hub not found", "Could not find VU1 Hub on the USB bus.\r\n"\
                        "Please make sure it is plugged in and (if necessary) drivers are installed.\r\n"\
                        "Then restart the VU Server application.\r\nVU server application will close now.")
-                sys.exit(0)
-                # raise Exception("Could not find VU1 Dials Hub. Please make sure it's plugged in and (if necessary) drivers are installed.")
+                sys.exit(1)
 
         logger.info("VU1 HUB port: {}".format(self.serialPort))
         self.dial_driver = DialSerialDriver(self.serialPort)
@@ -661,41 +653,9 @@ class Dial_API_Service(Application):
             self.dial_handler.provision_dials(num_attempts=3)
 
         handlers_config = { "handler":self.dial_handler, "config":self.config, "executor":self.serial_executor }
-        self.handlers = [
-            (r"/api/v0/dial/provision", Dial_Provision, handlers_config),
-            (r"/api/v0/dial/reset_all", Dial_Reset_All, handlers_config),
-            (r"/api/v0/dial/list", Dial_Get_List, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/status", Device_Status_Handler, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/set", Device_Set_Handler, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/setRaw", Device_SetRaw_Handler, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/image/set", Device_Set_Image, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/image/get", Dial_Get_Image, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/image/crc", Dial_Get_Image_CRC, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/backlight", Device_Backlight_Handler, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/name", Dial_Set_Dial_Name, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/reload", Dial_Reload_Device_Info, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/reset", Dial_Reset_Device, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/easing/dial", Dial_Set_Easing_Dial, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/easing/backlight", Dial_Set_Easing_Backlight, handlers_config),
-            (r"/api/v0/dial/([0-9A-F]*?)/easing/get", Dial_Get_Easing_Config, handlers_config),
-            (r"/api/v0/admin/keys/list", Admin_Keys_List, handlers_config),
-            (r"/api/v0/admin/keys/create", Admin_Keys_Create, handlers_config),
-            (r"/api/v0/admin/keys/remove", Admin_Keys_Remove, handlers_config),
-            (r"/api/v0/admin/keys/update", Admin_Keys_Update, handlers_config),
-            (r"/", FileHandler),
-            (r'/(.*)', StaticFileHandler, {'path': WEB_ROOT}),
-        ]
-
-        self.server_settings = {
-            "debug": True,
-            "autoreload": False,
-            # "autoreload": True,
-            "default_handler_class": Default_404_Handler,
-        }
+        self.handlers = make_routes(handlers_config)
 
     def signal_handler(self, signal, frame):
-        pid_lock('server', False)
         print('\r\nYou pressed Ctrl+C!')
 
         def do_shutdown():
@@ -727,7 +687,7 @@ class Dial_API_Service(Application):
 
     def run_forever(self):
         logger.info("Karanovic Research Dials - Starting API server")
-        app = Application(self.handlers, **self.server_settings)
+        app = Application(self.handlers)
 
         server_config = self.config.get_server_config()
         port = server_config['port']
@@ -754,19 +714,22 @@ class Dial_API_Service(Application):
 
 def main(cmd_args=None):
     configure_logging(cmd_args.logging if cmd_args else 'info')
+    exit_code = 0
     try:
         Dial_API_Service().run_forever()
     except SerialException:
         logger.exception("VU Dials API service - Serial port access denied")
         notify('warning', "Serial Port Access Denied", "VU Server failed to start. Access to serial port denied.\r\nVU Server already running?")
-    except Exception as e:
-        logger.exception("VU Dials API service crashed during setup.")
-        logger.exception(f"Unhandled exception: ({type(e)}) {e}")
+        exit_code = 1
+    except Exception:
+        logger.exception("VU Dials API service crashed.")
         notify('error', "Crashed", "VU Server has crashed unexpectedly!\r\nPlease check log files for more information.")
-    os._exit(0)
+        exit_code = 1
+    os._exit(exit_code)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Karanovic Research - VU Dials API service')
-    parser.add_argument('-l', '--logging', type=str, default='info', help='Set logging level. Default is `info`')
+    parser.add_argument('-l', '--logging', type=str.lower, choices=['debug', 'info'], default='info',
+                        help='Set logging level. Default is `info`')
     args = parser.parse_args()
     main(args)

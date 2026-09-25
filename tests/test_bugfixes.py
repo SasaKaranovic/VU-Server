@@ -144,14 +144,15 @@ def test_get_dial_list_rescan_drops_offline_dials():
 def _periodic_handler(backlight_send_result):
     """A bare ServerDialHandler wired to a stub driver for the periodic loop."""
     handler = object.__new__(ServerDialHandler)
-    handler.communication_timeout = 5
     handler.dials = {
         'AAA': {
             'uid': 'AAA',
             'index': '0',
             'backlight': {'red': 100, 'green': 0, 'blue': 0, 'white': 0},
             'backlight_changed': True,
-            'update_deadline': 0,
+            'backlight_fail_count': 0,
+            'backlight_retry_after': 0,
+            'backlight_unresponsive': False,
         }
     }
     handler.dial_driver = types.SimpleNamespace(
@@ -200,14 +201,12 @@ class _CountingBacklightDriver:
 
 def _backoff_handler(driver):
     handler = object.__new__(ServerDialHandler)
-    handler.communication_timeout = 5
     handler.dials = {
         'AAA': {
             'uid': 'AAA',
             'index': '0',
             'backlight': {'red': 100, 'green': 0, 'blue': 0, 'white': 0},
             'backlight_changed': True,
-            'update_deadline': 0,
             'backlight_fail_count': 0,
             'backlight_retry_after': 0,
             'backlight_unresponsive': False,
@@ -351,7 +350,7 @@ def test_dial_set_backlight_uses_bounded_read_timeout():
 
 @pytest.mark.parametrize("cls,attrs", [
     (DialSerialDriver, ('dials',)),
-    (ServerDialHandler, ('dials', 'hub_info')),
+    (ServerDialHandler, ('dials',)),
 ])
 def test_mutable_state_is_not_a_class_attribute(cls, attrs):
     # These were declared as class-level `{}` dicts, so every instance shared
