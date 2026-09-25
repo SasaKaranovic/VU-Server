@@ -8,7 +8,7 @@ import re
 import functools
 from concurrent.futures import ThreadPoolExecutor
 from mimetypes import guess_type
-from dials.base_logger import logger, set_logger_level
+from dials.base_logger import logger, configure_logging
 from tornado.web import Application, RequestHandler, Finish, StaticFileHandler
 from tornado.ioloop import IOLoop, PeriodicCallback
 from dial_driver import DialSerialDriver
@@ -771,10 +771,7 @@ class Dial_API_Service(Application):
 
 
 def main(cmd_args=None):
-    if cmd_args is None:
-        set_logger_level('info')
-    else:
-        set_logger_level(cmd_args.logging)
+    configure_logging(cmd_args.logging if cmd_args else 'info')
     try:
         Dial_API_Service().run_forever()
     except SerialException:
