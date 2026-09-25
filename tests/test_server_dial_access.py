@@ -1,9 +1,7 @@
-"""Regression tests for per-dial API-key authorization.
+"""Tests for per-dial API-key authorization.
 
-Bug #16: every per-dial control/read endpoint only checked that the API key
-*existed* (`is_valid_api_key`) and skipped `api_key_has_access_to_dial`. A key
-scoped to dial A could therefore command or read dial B by putting B's UID in
-the URL. The `dial_access` grant was only ever enforced by the list endpoint.
+Every per-dial endpoint must reject a key that is unknown or not granted the
+dial in the URL, before running any dial action.
 
 `ALLOWED` is a UID the scoped key may touch; `DENIED` is one it may not. Both
 are hex strings because the route regex only accepts `[0-9A-F]`.
@@ -14,6 +12,8 @@ import tornado.testing
 import tornado.web
 
 from server import (
+    make_routes,
+    BaseHandler,
     Device_Status_Handler,
     Device_Set_Handler,
     Device_SetRaw_Handler,
@@ -27,6 +27,7 @@ from server import (
     Dial_Set_Calibration,
     Dial_Set_Easing_Dial,
     Dial_Set_Easing_Backlight,
+    Dial_Get_Easing_Config,
 )
 
 ALLOWED = 'ABCDEF'
@@ -118,6 +119,7 @@ ENDPOINTS = [
     ('easing_dial', 'GET', "/api/v0/dial/{uid}/easing/dial", '&step=1'),
     ('easing_backlight', 'GET', "/api/v0/dial/{uid}/easing/backlight", '&step=1'),
     ('image_set', 'POST', "/api/v0/dial/{uid}/image/set", ''),
+    ('easing_get', 'GET', "/api/v0/dial/{uid}/easing/get", ''),
 ]
 
 
@@ -140,6 +142,7 @@ class DialAccessControlTestCase(tornado.testing.AsyncHTTPTestCase):
             (r"/api/v0/dial/([0-9A-F]*?)/calibrate", Dial_Set_Calibration, hc),
             (r"/api/v0/dial/([0-9A-F]*?)/easing/dial", Dial_Set_Easing_Dial, hc),
             (r"/api/v0/dial/([0-9A-F]*?)/easing/backlight", Dial_Set_Easing_Backlight, hc),
+            (r"/api/v0/dial/([0-9A-F]*?)/easing/get", Dial_Get_Easing_Config, hc),
         ])
 
     def _fetch(self, method, url):
@@ -172,3 +175,50 @@ class DialAccessControlTestCase(tornado.testing.AsyncHTTPTestCase):
         response = self.fetch(f"/api/v0/dial/{DENIED}/set?key=adminkey&value=50")
         assert response.code == 200
         assert 'dial_set_percent' in self.fake_handler.calls
+
+    def test_missing_or_unknown_key_is_401_on_every_dial_endpoint(self):
+        for key_query in ('', 'key=badkey'):
+            for name, method, tmpl, extra in ENDPOINTS:
+                self.fake_handler.calls.clear()
+                response = self._fetch(method, tmpl.format(uid=ALLOWED) + f"?{key_query}{extra}")
+
+                assert response.code == 401, f"{name}: got {response.code}"
+                assert json.loads(response.body)['message'] == 'Unauthorized'
+                assert self.fake_handler.calls == [], name
+
+    def test_denied_image_get_is_json(self):
+        response = self.fetch(f"/api/v0/dial/{DENIED}/image/get?key=scopedkey")
+        assert response.code == 403
+        assert response.headers['Content-Type'].startswith('application/json')
+
+    def test_name_missing_is_400(self):
+        response = self.fetch(f"/api/v0/dial/{ALLOWED}/name?key=scopedkey")
+        assert response.code == 400
+
+    def test_name_with_invalid_characters_is_400(self):
+        response = self.fetch(f"/api/v0/dial/{ALLOWED}/name?key=scopedkey&name=he%2Allo")
+        assert response.code == 400
+
+    def test_calibrate_missing_value_is_400(self):
+        response = self.fetch(f"/api/v0/dial/{ALLOWED}/calibrate?key=scopedkey")
+        assert response.code == 400
+        assert self.fake_handler.calls == []
+
+    def test_calibrate_failure_is_503(self):
+        self.fake_handler.dial_set_calibration = lambda **_: False
+        response = self.fetch(f"/api/v0/dial/{ALLOWED}/calibrate?key=scopedkey&value=1")
+        assert response.code == 503
+
+
+def test_every_api_route_declares_auth():
+    expected = {'/api/v0/dial/list': 'key'}
+    for pattern, handler, *_ in make_routes({}):
+        if not (isinstance(handler, type) and issubclass(handler, BaseHandler)):
+            continue
+        if pattern in expected:
+            want = expected[pattern]
+        elif pattern.startswith('/api/v0/dial/(['):
+            want = 'dial'
+        else:
+            want = 'admin'
+        assert handler.auth == want, f"{pattern}: auth={handler.auth!r}"

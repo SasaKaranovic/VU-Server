@@ -58,3 +58,7 @@ class DialGetListTestCase(tornado.testing.AsyncHTTPTestCase):
 
         assert response.code == 200
         assert body['data'][0]['backlight'] == {'red': 1, 'green': 2, 'blue': 3}
+
+    def test_unknown_key_is_401(self):
+        response = self.fetch("/api/v0/dial/list?key=badkey")
+        assert response.code == 401

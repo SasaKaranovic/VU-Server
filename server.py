@@ -25,6 +25,10 @@ STATUS_FIELDS = ('uid', 'index', 'dial_name', 'value', 'backlight', 'image_file'
                  'value_changed', 'backlight_changed', 'image_changed')
 
 class BaseHandler(RequestHandler):
+    # Credential prepare() demands: None, 'key' (any API key), 'dial' (an API
+    # key granted the dial in the first path argument) or 'admin' (master key).
+    auth = None
+
     def initialize(self, handler, config, executor=None):
         self.handler = handler # pylint: disable=attribute-defined-outside-init
         self.config = config # pylint: disable=attribute-defined-outside-init
@@ -53,47 +57,21 @@ class BaseHandler(RequestHandler):
         self.write(resp)
         self.finish()
 
-    def api_key_has_access_to_dial(self, gaugeUID, api_key=None):
-        if api_key is None:
-            api_key = self.get_argument('key', None)
+    def prepare(self):
+        if self.auth == 'admin':
+            if not self.config.validate_admin_key(self.get_argument('admin_key', None)):
+                logger.error("Invalid or missing admin key")
+                self._deny(401, 'Invalid or missing API key.')
+        elif self.auth is not None:
+            key = self.get_argument('key', None)
+            if not self.config.is_valid_api_key(key):
+                self._deny(401, 'Unauthorized')
+            if self.auth == 'dial' and not self.config.api_key_has_access_to_dial(key, self.path_args[0]):
+                self._deny(403, 'API key does not have access to this dial.')
 
-        if not self.config.api_key_has_access_to_dial(api_key, gaugeUID):
-            return False
-        return True
-
-    def is_valid_api_key(self):
-        if not self.config.is_valid_api_key(self.get_argument('key', None)):
-            return False
-        return True
-
-    def require_dial_access(self, dial_uid):
-        # Gate for every per-dial endpoint: the key must both exist *and* be
-        # granted access to this specific dial. Skipping the second check let a
-        # key scoped to one dial command/read any other dial by UID -- the
-        # `dial_access` grant was previously only honoured by the list endpoint.
-        # Sends the appropriate error response itself; returns False on denial.
-        if not self.is_valid_api_key():
-            self.send_response(status='fail', message='Unauthorized', status_code=401)
-            return False
-        if not self.api_key_has_access_to_dial(gaugeUID=dial_uid):
-            self.send_response(status='fail',
-                               message='API key does not have access to this dial.',
-                               status_code=403)
-            return False
-        return True
-
-    def valid_admin_key(self):
-        admin_key = self.get_argument('admin_key', None)
-        if not admin_key:
-            logger.error("Missing API key")
-            self.send_response(status='fail', message='Invalid or missing API key.', status_code=401)
-            return False
-
-        if not self.config.validate_admin_key(admin_key):
-            logger.error("Invalid API key")
-            self.send_response(status='fail', message='Invalid or missing API key.', status_code=401)
-            return False
-        return True
+    def _deny(self, status_code, message):
+        self.send_response(status='fail', message=message, status_code=status_code)
+        raise Finish()
 
     @staticmethod
     def _arg_is_true(value):
@@ -120,12 +98,10 @@ class BaseHandler(RequestHandler):
 
 
 class Device_Status_Handler(BaseHandler):
+    auth = 'dial'
+
     def get(self, dial_uid):
         logger.debug(f"Request:STATUS - Device:{dial_uid}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(dial_uid):
-            return
 
         dial = self.handler.get_dial_info(dial_uid=dial_uid)
         if dial is not None:
@@ -133,32 +109,30 @@ class Device_Status_Handler(BaseHandler):
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.')
 
 class Device_Set_Handler(BaseHandler):
+    auth = 'dial'
+
     def get(self, dial_uid):
         value = self.get_argument('value', 0)
         logger.debug(f"Request:SET - Device:{dial_uid} To:{value}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(dial_uid):
-            return
 
         if self.handler.dial_set_percent(dial_uid=dial_uid, value=value):
             return self.send_response(status='ok', message='Update queued')
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.')
 
 class Device_SetRaw_Handler(BaseHandler):
+    auth = 'dial'
+
     async def get(self, dial_uid):
         value = self.get_argument('value', 0)
         logger.debug(f"Request:SET_RAW - Device:{dial_uid} To:{value}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(dial_uid):
-            return
 
         if await self.run_blocking(self.handler.dial_set_raw, dial_uid=dial_uid, value=value):
             return self.send_response(status='ok', message='Dial RAW value updated', status_code=201)
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
 class Device_Backlight_Handler(BaseHandler):
+    auth = 'dial'
+
     def get(self, dial_uid):
         red = self.get_argument('red', 0)
         green = self.get_argument('green', 0)
@@ -167,25 +141,19 @@ class Device_Backlight_Handler(BaseHandler):
 
         logger.debug(f"Request:BACKLIGHT - Device:{dial_uid} To: (red:{red} green:{green} blue:{blue} white:{white})")
 
-        # Validate API key and per-dial access
-        if not self.require_dial_access(dial_uid):
-            return
-
         if self.handler.dial_set_backlight(dial_uid=dial_uid, red=red, green=green, blue=blue, white=white):
             return self.send_response(status='ok', message='Update queued', status_code=201)
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
 class Device_Set_Image(BaseHandler):
+    auth = 'dial'
+
     def post(self, dial_uid):
         get_force = self.get_argument('force', False)
 
         force_img_update = self._arg_is_true(get_force)
 
         logger.debug(f"Request:SET_IMAGE - Device:{dial_uid}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(dial_uid):
-            return
 
         # Store new image
         img_file = self.handle_image_upload(dial_uid)
@@ -238,14 +206,12 @@ class Device_Set_Image(BaseHandler):
             os.makedirs(self.upload_path)
 
 class Dial_Get_Image(BaseHandler):
+    auth = 'dial'
+
     def get(self, gaugeUID):
         self.set_header("Content-Type", "image/png")
 
         logger.debug("Request: GET_IMAGE")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
 
         dial_image = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
 
@@ -266,12 +232,10 @@ class Dial_Get_Image(BaseHandler):
             return self.send_response(status='fail', message='Internal sever error!', status_code=500)
 
 class Dial_Get_Image_CRC(BaseHandler):
+    auth = 'dial'
+
     def get(self, gaugeUID):
         logger.debug("Request: GET_IMAGE_CRC")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
 
         img_file = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
 
@@ -279,44 +243,31 @@ class Dial_Get_Image_CRC(BaseHandler):
         return self.send_response(status='ok', data=crc)
 
 class Dial_Get_List(BaseHandler):
+    auth = 'key'
+
     def get(self):
         logger.debug("Request: DEVICE_LIST")
-
-        # Validate API key
-        if not self.is_valid_api_key():
-            return self.send_response(status='fail', message='Unauthorized', status_code=401)
-
-        dials = self.handler.get_dial_info()
-        # logger.debug(dials)
-
-        # Reshape dials data to respond with only relevant information
-        dialData = []
-        for uid in dials:
-            tmp_dial =  {
-                            'uid' : uid,
-                            'dial_name': dials[uid]['dial_name'],
-                            'value': dials[uid]['value'],
-                            'backlight': dict(dials[uid]['backlight']),
-                            'image_file' : dials[uid]['image_file']
-                        }
-            # Remove unused keys
-            tmp_dial['backlight'].pop('white', None)
-
-            # If key has access to dial
-            if self.api_key_has_access_to_dial(gaugeUID=uid):
-                dialData.append(tmp_dial)
-
-        return self.send_response(status='ok', data=dialData)
+        key = self.get_argument('key')
+        dial_data = [
+            {
+                'uid': uid,
+                'dial_name': dial['dial_name'],
+                'value': dial['value'],
+                'backlight': {c: v for c, v in dial['backlight'].items() if c != 'white'},
+                'image_file': dial['image_file'],
+            }
+            for uid, dial in self.handler.get_dial_info().items()
+            if self.config.api_key_has_access_to_dial(key, uid)
+        ]
+        return self.send_response(status='ok', data=dial_data)
 
 
 class Dial_Provision(BaseHandler):
+    auth = 'admin'
+
     async def get(self):
 
         logger.debug("Request: PROVISION_NEW_DIALS")
-
-        # Validate master key
-        if not self.valid_admin_key():
-            return False
 
         dials = await self.run_blocking(self.handler.provision_dials)
         logger.debug(dials)
@@ -324,95 +275,77 @@ class Dial_Provision(BaseHandler):
         return self.send_response(status='ok', data=dials)
 
 class Dial_Reset_All(BaseHandler):
+    auth = 'admin'
+
     async def get(self):
 
         logger.debug("Request: RESET_ALL_DEVICES")
-
-        # Validate master key -- this is a bus-wide, disruptive action.
-        if not self.valid_admin_key():
-            return False
 
         if await self.run_blocking(self.handler.reset_all_devices):
             return self.send_response(status='ok', message='All devices reset.', status_code=200)
         return self.send_response(status='fail', message='Failed to reset devices.', status_code=503)
 
 class Dial_Reset_Device(BaseHandler):
+    auth = 'dial'
+
     def get(self, gaugeUID):
 
         logger.debug(f"Request: RESET_DEVICE - Device:{gaugeUID}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
 
         if self.handler.reset_device(gaugeUID):
             return self.send_response(status='ok', message='Device reset.', status_code=200)
         return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
 class Dial_Set_Dial_Name(BaseHandler):
+    auth = 'dial'
+
     def get(self, gaugeUID):
         new_name = self.get_argument('name', None)
         logger.debug(f"Request:SET_NAME - Device:{gaugeUID} To: friendly name={new_name}")
 
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
+        if new_name is None:
+            return self.send_response(status='fail', message='Missing `name` parameter.', status_code=400)
+        if len(new_name) < 3:
+            return self.send_response(status='fail', message='Dial name should be at least 3 characters long.', status_code=400)
+        if len(new_name) > 30:
+            return self.send_response(status='fail', message='Dial name should be 30 characters or less.', status_code=400)
+        if not re.fullmatch(r"[A-Za-z0-9_ -]*", new_name):
+            return self.send_response(status='fail', message='Invalid characters! Only `A-Z`, `0-9`, `-`, `_` and space allowed.', status_code=400)
 
-        if new_name is not None:
-            # Dial name should be 3 or more characters
-            if len(new_name) < 3:
-                return self.send_response(status='fail', message='Dial name should be at least 3 characters long.', status_code=400)
-
-            # Limit dial name to 30 characters
-            if len(new_name) > 30:
-                return self.send_response(status='fail', message='Dial name should be 30 characters or less.', status_code=400)
-
-            # Verify valid name
-            if not re.search(r"^[a-z0-9\-_\ ]*$", new_name, re.IGNORECASE):
-                return self.send_response(status='fail', message='Invalid characters! Only `A-Z`, `0-9`, `-`, `_` and space allowed.', status_code=400)
-
-            # Finally update dial name
-            ret = self.config.update_dial_db_cell(dial_uid=gaugeUID, cell='dial_name', value=new_name)
-            if ret:
-                return self.send_response(status='ok', status_code=201)
-            return self.send_response(status='fail', message='Can not update dial name! Dial does not exist?', status_code=406)
-        return self.send_response(status='fail', message='Device not present!', status_code=406)
+        if self.config.update_dial_db_cell(dial_uid=gaugeUID, cell='dial_name', value=new_name):
+            return self.send_response(status='ok', status_code=201)
+        return self.send_response(status='fail', message='Can not update dial name! Dial does not exist?', status_code=406)
 
 class Dial_Reload_Device_Info(BaseHandler):
+    auth = 'dial'
+
     async def get(self, gaugeUID):
 
         logger.debug(f"Request:GET_INFO - Device:{gaugeUID}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
 
         dial_info = await self.run_blocking(self.handler.dial_reload_info_from_hardware, gaugeUID)
         return self.send_response(status='ok', data=dial_info)
 
 class Dial_Set_Calibration(BaseHandler):
+    auth = 'dial'
+
     async def get(self, gaugeUID):
         dac_calibration = self.get_argument('value', None)
         logger.debug(f"Request:SET_CALIBRATION - Device:{gaugeUID} To: value={dac_calibration}")
 
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
-
-        if dac_calibration is not None:
-            await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False)
+        if dac_calibration is None:
+            return self.send_response(status='fail', message='Missing `value` parameter.', status_code=400)
+        if await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False):
             return self.send_response(status='ok', message="Calibration value updated", status_code=201)
-        return self.send_response(status='fail', message="Device not present", status_code=406)
+        return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
 class Dial_Set_Easing_Dial(BaseHandler):
+    auth = 'dial'
+
     async def get(self, gaugeUID):
         step = self.get_argument('step', None)
         period = self.get_argument('period', None)
         logger.debug(f"Request:SET_EASING_DIAL - Device:{gaugeUID} Step:{step} Period:{period}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
 
         if step is None and period is None:
             return self.send_response(status='fail', message="Please provide at least one of required parameters (`step` or `period`)", status_code=400)
@@ -435,14 +368,12 @@ class Dial_Set_Easing_Dial(BaseHandler):
         return self.send_response(status='fail', message="Device not present", status_code=406)
 
 class Dial_Set_Easing_Backlight(BaseHandler):
+    auth = 'dial'
+
     async def get(self, gaugeUID):
         step = self.get_argument('step', None)
         period = self.get_argument('period', None)
         logger.debug(f"Request:SET_EASING_BACKLIGHT - Device:{gaugeUID} Step:{step} Period:{period}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
 
         if step is None and period is None:
             return self.send_response(status='fail', message="Please provide at least one of required parameters (`step` or `period`)", status_code=400)
@@ -465,111 +396,62 @@ class Dial_Set_Easing_Backlight(BaseHandler):
         return self.send_response(status='fail', message="Device not present", status_code=406)
 
 class Dial_Get_Easing_Config(BaseHandler):
+    auth = 'dial'
+
     def get(self, gaugeUID):
         logger.debug(f"Request:GET_EASING_CONFIG - Device:{gaugeUID}")
-
-        # Validate API key and per-dial access
-        if not self.require_dial_access(gaugeUID):
-            return
 
         # TODO: Implement in dial handler
         return self.send_response(status='ok', message="not supported yet")
 
 # -- Keys --
 class Admin_Keys_List(BaseHandler):
+    auth = 'admin'
+
     def get(self):
         logger.debug("Request:Admin_Keys_List")
-
-        # Validate master key
-        if not self.valid_admin_key():
-            return False # Above function already sends response
-
-        keys = self.config.list_keys()
-
-        ret = []
-        for _, value in keys.items():
-            # value.pop('dials', None)
-            ret.append(value)
-        return self.send_response(status='ok', data=ret)
+        return self.send_response(status='ok', data=list(self.config.list_keys().values()))
 
 class Admin_Keys_Create(BaseHandler):
+    auth = 'admin'
+
     def post(self):
         logger.debug("Request:Admin_Keys_Create")
-
-        # Validate master key
-        if not self.valid_admin_key():
-            return False # Above function already sends response
-
-        key_name    = self.get_argument('name', 'Not set')
-        dial_access = self.get_argument('dials', None)
-
-        if dial_access:
-            dials = dial_access.split(';')
-        else:
-            dials = None
-
         # `priviledges` is ignored; only the configured master key is admin.
-        new_key = self.config.create_api_key(key_name)
-
-        if dials:
-            self.config.api_key_add_dial_access(new_key, dials)
-
+        new_key = self.config.create_api_key(self.get_argument('name', 'Not set'))
+        dial_access = self.get_argument('dials', None)
+        if dial_access:
+            self.config.api_key_add_dial_access(new_key, dial_access.split(';'))
         return self.send_response(status='ok', data=new_key)
 
 class Admin_Keys_Update(BaseHandler):
+    auth = 'admin'
+
     def post(self):
         logger.debug("Request:Admin_Keys_Update")
-
-        dial_list = self.get_argument('dials', None)
         key = self.get_argument('key', None)
         name = self.get_argument('name', None)
+        dial_list = self.get_argument('dials', None)
 
-        # Validate master key
-        if not self.valid_admin_key():
-            return False # Above function already sends response
-
-        # Check if API key exists
-        if not self.is_valid_api_key():
+        if not self.config.is_valid_api_key(key):
             return self.send_response(status='fail', message='Invalid key selected!')
+        if name is not None and not self.config.update_api_key(key_uid=key, key_name=name):
+            return self.send_response(status='fail', message='Failed to update key!')
 
-        logger.debug(dial_list)
-        logger.debug(key)
-        logger.debug(name)
-
-        if dial_list is None and key is None:
-            return self.send_response(status='fail', message='Key, Key name and Dial list are all empty. Aborting.', status_code=400)
-
-        updated = False
-
-        # Update key name
-        if name is not None:
-            if not self.config.update_api_key(key_uid=key, key_name=name):
-                return self.send_response(status='fail', message='Failed to update key!')
-            updated = True
-
-        # Update dial access
-        if dial_list:
-            dial_list = dial_list.split(';')
-            if self.config.api_key_add_dial_access(key, dial_list):
-                updated = True
-
-        if updated:
+        dials_updated = bool(dial_list) and self.config.api_key_add_dial_access(key, dial_list.split(';'))
+        if name is not None or dials_updated:
             return self.send_response(status='ok', message='Key updated!')
         return self.send_response(status='fail', message='Failed to update key!')
 
 class Admin_Keys_Remove(BaseHandler):
+    auth = 'admin'
+
     def get(self):
         logger.debug("Request:Admin_Keys_Remove")
         key_uid = self.get_argument('key', None)
 
-        # Validate master key
-        if not self.valid_admin_key():
-            return False # Above function already sends response
-
-        # Check if API key exists
-        if not self.is_valid_api_key():
+        if not self.config.is_valid_api_key(key_uid):
             return self.send_response(status='fail', message='Invalid key selected!')
-
         if not self.config.delete_api_key(key_uid):
             return self.send_response(status='fail', message='Failed to remove key!')
         return self.send_response(status='ok', message='Key removed!')

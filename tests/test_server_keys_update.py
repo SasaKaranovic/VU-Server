@@ -64,3 +64,19 @@ class KeysUpdateTestCase(tornado.testing.AsyncHTTPTestCase):
         assert body['status'] == 'ok'
         assert self.fake_config.updated_names == [('userkey', 'NewName')]
         assert self.fake_config.dial_access_calls == [('userkey', ['AAA'])]
+
+    def test_missing_or_wrong_admin_key_is_401(self):
+        for body in ("key=userkey&name=NewName", "admin_key=userkey&key=userkey&name=NewName"):
+            response = self._post(body)
+            assert response.code == 401
+            assert json.loads(response.body)['status'] == 'fail'
+        assert self.fake_config.updated_names == []
+
+    def test_unknown_target_key_fails(self):
+        response = self._post("admin_key=adminkey&key=nosuchkey&name=NewName")
+        assert json.loads(response.body)['message'] == 'Invalid key selected!'
+        assert self.fake_config.updated_names == []
+
+    def test_nothing_to_update_fails(self):
+        response = self._post("admin_key=adminkey&key=userkey")
+        assert json.loads(response.body)['status'] == 'fail'
