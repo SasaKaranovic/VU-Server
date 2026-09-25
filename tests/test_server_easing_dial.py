@@ -10,11 +10,15 @@ import server
 class FakeDialHandler:
     def __init__(self):
         self.easing_calls = []
-        self.result = True
+        self.stored = []
+        self.present = True
 
-    def dial_set_easing(self, dial_uid, target, step=None, period=None):
+    def dial_send_easing(self, dial_uid, target, step=None, period=None):
         self.easing_calls.append((dial_uid, target, step, period))
-        return self.result
+        return {f'{target}_step': step} if self.present else None
+
+    def dial_store_easing(self, dial_uid, sent):
+        self.stored.append((dial_uid, sent))
 
 
 class FakeConfig:
@@ -40,6 +44,7 @@ class EasingTestCase(tornado.testing.AsyncHTTPTestCase):
         assert response.code == 200
         assert body['status'] == 'ok'
         assert self.fake_handler.easing_calls == [('ABC123', 'dial', 5, None)]
+        assert self.fake_handler.stored == [('ABC123', {'dial_step': 5})]
 
     def test_period_only(self):
         response, _ = self._get("easing/dial?key=testkey&period=250")
@@ -63,9 +68,10 @@ class EasingTestCase(tornado.testing.AsyncHTTPTestCase):
         assert self.fake_handler.easing_calls == []
 
     def test_unknown_dial_is_406(self):
-        self.fake_handler.result = False
+        self.fake_handler.present = False
         response, _ = self._get("easing/backlight?key=testkey&step=5")
         assert response.code == 406
+        assert self.fake_handler.stored == []
 
     def test_unknown_easing_target_is_json_404(self):
         response, body = self._get("easing/get?key=testkey")

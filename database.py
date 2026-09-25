@@ -1,7 +1,6 @@
 import os
 import secrets
 import sqlite3
-from threading import RLock
 from dials.base_logger import logger
 
 API_KEY_ALPHABET = 'abcdefghijkmnpqrstuvwxyz0123456789'
@@ -14,13 +13,11 @@ class DialsDB:
 
         @param init_if_missing: ignored.
         """
-        # The serial worker thread also writes here, so the connection is
-        # shared across threads and every statement holds the lock.
-        self._lock = RLock()
         self.database_file = os.path.join(os.path.dirname(__file__), database_file)
         logger.info(f"VU1 Database file: {self.database_file}")
 
-        self.connection = sqlite3.connect(self.database_file, check_same_thread=False)
+        # Only the thread that opened it, the IOLoop thread, may use the connection; sqlite3 enforces this.
+        self.connection = sqlite3.connect(self.database_file)
         self.connection.row_factory = sqlite3.Row
         self._init_database()
 
@@ -73,7 +70,7 @@ class DialsDB:
         if not key_id or not dials:
             return False
 
-        with self._lock, self.connection:
+        with self.connection:
             self.connection.execute("DELETE FROM `dial_access` WHERE `key_id`=?", (key_id,))
             cursor = self.connection.executemany(
                 "INSERT OR IGNORE INTO `dial_access` (dial_uid, key_id) VALUES (?, ?)",
@@ -110,7 +107,7 @@ class DialsDB:
 
         @returns: True if the key was deleted.
         """
-        with self._lock, self.connection:
+        with self.connection:
             self.connection.execute(
                 "DELETE FROM `dial_access` WHERE `key_id` IN "
                 "(SELECT `key_id` FROM `api_keys` WHERE `key_uid`=? AND `key_level` < 99)", (key_uid,))
@@ -124,16 +121,15 @@ class DialsDB:
 
         @returns: the number of rows changed.
         """
-        with self._lock, self.connection:
+        with self.connection:
             return self.connection.execute(sql, params).rowcount
 
     def _fetch(self, sql, params=(), one=False):
-        with self._lock:
-            cursor = self.connection.execute(sql, params)
-            return cursor.fetchone() if one else cursor.fetchall()
+        cursor = self.connection.execute(sql, params)
+        return cursor.fetchone() if one else cursor.fetchall()
 
     def _init_database(self):
-        with self._lock, self.connection:
+        with self.connection:
             self.connection.execute("""
                     CREATE TABLE IF NOT EXISTS dials (
                                                     "dial_id" INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -63,17 +63,24 @@ class FakeDialHandler:
         self._record('reset_device')
         return True
 
-    def dial_reload_info_from_hardware(self, gaugeUID):
-        self._record('dial_reload_info_from_hardware')
+    def dial_read_info_from_hardware(self, gaugeUID):
+        self._record('dial_read_info_from_hardware')
+        return {}
+
+    def dial_store_info(self, gaugeUID, info):
+        self._record('dial_store_info')
         return {'uid': gaugeUID}
 
     def dial_set_calibration(self, dial_uid, value, fullScale=False):
         self._record('dial_set_calibration')
         return True
 
-    def dial_set_easing(self, dial_uid, target, step=None, period=None):
-        self._record('dial_set_easing')
-        return True
+    def dial_send_easing(self, dial_uid, target, step=None, period=None):
+        self._record('dial_send_easing')
+        return {}
+
+    def dial_store_easing(self, dial_uid, sent):
+        self._record('dial_store_easing')
 
     def dial_set_name(self, dial_uid, name):
         self._record('dial_set_name')

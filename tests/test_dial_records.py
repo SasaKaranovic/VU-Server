@@ -44,7 +44,7 @@ def _handler(config=None):
     handler.dial_driver = FakeDriver()
     handler.server_config = config or FakeConfig()
     handler.dials = {}
-    handler._reload_dials(True)
+    handler.rebuild_dials(handler.dial_driver.get_dial_list(True))
     return handler
 
 
@@ -62,11 +62,23 @@ def test_reload_builds_record_from_scan_and_db_row(tmp_path, monkeypatch):
     assert dial['value_unresponsive'] is False
 
 
-def test_easing_sends_records_and_persists():
+def test_easing_send_touches_neither_record_nor_db():
     config = FakeConfig()
     handler = _handler(config)
 
-    assert handler.dial_set_easing('AAA', 'backlight', step=7) is True
+    sent = handler.dial_send_easing('AAA', 'dial', step=1, period=20)
+
+    assert sent == {'dial_step': 1, 'dial_period': 20}
+    assert [c[0] for c in handler.dial_driver.calls] == ['dial_easing_dial_step', 'dial_easing_dial_period']
+    assert handler.dials['AAA']['easing']['dial_step'] == 2
+    assert config.writes == []
+
+
+def test_easing_store_records_and_persists():
+    config = FakeConfig()
+    handler = _handler(config)
+
+    handler.dial_store_easing('AAA', handler.dial_send_easing('AAA', 'backlight', step=7))
 
     assert handler.dial_driver.calls == [('dial_easing_backlight_step', '3', 7)]
     assert handler.dials['AAA']['easing']['backlight_step'] == 7
@@ -74,18 +86,8 @@ def test_easing_sends_records_and_persists():
     assert config.writes == [('AAA', {'easing_backlight_step': 7})]
 
 
-def test_easing_without_persist_skips_the_db():
-    config = FakeConfig()
-    handler = _handler(config)
-
-    handler.dial_set_easing('AAA', 'dial', step=1, period=20, persist=False)
-
-    assert [c[0] for c in handler.dial_driver.calls] == ['dial_easing_dial_step', 'dial_easing_dial_period']
-    assert config.writes == []
-
-
-def test_easing_on_unknown_dial_is_false():
-    assert _handler().dial_set_easing('BBB', 'dial', step=1) is False
+def test_easing_on_unknown_dial_is_none():
+    assert _handler().dial_send_easing('BBB', 'dial', step=1) is None
 
 
 def test_rename_reaches_the_record_immediately():
@@ -112,7 +114,9 @@ def test_reload_from_hardware_writes_one_row():
                                           'backlight_step': 8, 'backlight_period': 80},
     )
 
-    dial = handler.dial_reload_info_from_hardware('AAA')
+    info = handler.dial_read_info_from_hardware('AAA')
+    assert config.writes == []
+    dial = handler.dial_store_info('AAA', info)
 
     assert dial['fw_version'] == 'F2'
     assert dial['easing']['backlight_period'] == 80
@@ -130,3 +134,20 @@ def test_rename_of_dial_off_the_bus_fails_without_db_write():
 
     assert handler.dial_set_name('BBB', 'Shelf') is False
     assert config.writes == []
+
+
+def test_store_info_for_a_missing_read_or_dial_is_false():
+    config = FakeConfig()
+    handler = _handler(config)
+
+    assert handler.dial_read_info_from_hardware('BBB') is None
+    assert handler.dial_store_info('AAA', None) is False
+    assert handler.dial_store_info('BBB', {'fw_version': 'F2'}) is False
+    assert config.writes == []
+
+
+def test_empty_rescan_keeps_the_records():
+    handler = _handler()
+    dials = handler.dials
+
+    assert handler.rebuild_dials({}) is dials

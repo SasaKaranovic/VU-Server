@@ -8,7 +8,13 @@ exposed dial administration to the whole LAN out of the box.
 """
 import types
 
+import pytest
+
 import server
+
+
+class _Listened(Exception):
+    """Ends run_forever once the bind address is known."""
 
 
 class _FakeApp:
@@ -20,14 +26,7 @@ class _FakeApp:
 
     def listen(self, port, address=None, **kwargs):
         _FakeApp.listen_calls.append((port, address))
-
-
-class _FakeLoop:
-    def start(self):
-        pass
-
-    def run_in_executor(self, *args, **kwargs):  # pragma: no cover - unused
-        raise AssertionError("periodic update must not run in this test")
+        raise _Listened
 
 
 def _service(server_cfg):
@@ -42,10 +41,8 @@ def _service(server_cfg):
 def _run(monkeypatch, server_cfg):
     _FakeApp.listen_calls = []
     monkeypatch.setattr(server, 'Application', _FakeApp)
-    monkeypatch.setattr(server.IOLoop, 'instance', staticmethod(lambda: _FakeLoop()))
-    monkeypatch.setattr(server, 'PeriodicCallback',
-                        lambda cb, period: types.SimpleNamespace(start=lambda: None))
-    _service(server_cfg).run_forever()
+    with pytest.raises(_Listened):
+        _service(server_cfg).run_forever()
     return _FakeApp.listen_calls
 
 

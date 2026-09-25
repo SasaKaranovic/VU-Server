@@ -73,23 +73,20 @@ def test_api_update_master_is_committed(tmp_path):
     assert row['key_uid'] == 'MASTERKEY123'
 
 
-# -- #6: provision_dials returns the refreshed dial list ----------------------
+# -- #6: provision_dials returns the rescanned bus -----------------------------
 
-def test_provision_dials_returns_dial_info(monkeypatch):
-    # The /dial/provision endpoint sends back whatever provision_dials()
-    # returns. Previously the method returned None, so the endpoint always
-    # responded with `data: null`.
+def test_provision_dials_returns_the_rescan(monkeypatch):
+    # The /dial/provision endpoint rebuilds the records from this scan.
     handler = object.__new__(ServerDialHandler)
-    handler.dials = {'AAA': {'uid': 'AAA', 'value': 0}}
-    handler.dial_driver = types.SimpleNamespace(provision_dials=lambda: True)
+    handler.dials = {}
+    handler.dial_driver = types.SimpleNamespace(
+        provision_dials=lambda: True, get_dial_list=lambda rescan=False: {0: 'AAA'})
 
     # Keep the test fast and hardware-free.
     monkeypatch.setattr(server_dial_handler, 'sleep', lambda _seconds: None)
-    monkeypatch.setattr(handler, '_reload_dials', lambda rescan=False: None)
 
-    result = handler.provision_dials(num_attempts=1)
-
-    assert result == {'AAA': {'uid': 'AAA', 'value': 0}}
+    assert handler.provision_dials(num_attempts=1) == {0: 'AAA'}
+    assert handler.dials == {}
 
 
 # -- #7: get_dial_list drops dials that went offline on rescan ----------------

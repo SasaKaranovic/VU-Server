@@ -7,6 +7,19 @@ from dials.base_logger import logger
 # shipped fallback `img_blank` lives.
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'upload')
 
+
+def dial_image_path(dial_uid):
+    """@returns the absolute path of the dial's uploaded image, which may not exist."""
+    return os.path.join(UPLOAD_DIR, f'img_{dial_uid}')
+
+
+def dial_image_file(dial_uid):
+    """@returns the dial's uploaded image, or `img_blank` if none was uploaded."""
+    # Absolute, because a reset hands it to the driver, which must not resolve it against the CWD.
+    path = dial_image_path(dial_uid)
+    return path if os.path.exists(path) else os.path.join(UPLOAD_DIR, 'img_blank')
+
+
 # Dial record field -> `dials` table column. Easing fields live under
 # record['easing'] and map to `easing_<field>`.
 DB_COLUMNS = {
@@ -29,8 +42,9 @@ def apply_db_row(dial, row):
 class ServerDialHandler:
     """Owns the per-dial records, keyed by UID, and queues API updates for the periodic flush.
 
-    Request handlers queue on the IOLoop thread; periodic_dial_update runs on
-    the serial worker thread.
+    The database and the record set are touched only on the IOLoop thread;
+    work on the serial worker changes only per-dial delivery state. Methods
+    that read the bus return what they read for an IOLoop-side method to store.
     """
     # Retry-backoff for value and backlight writes. A dial that stops ACKing is
     # retried with exponential backoff; after BACKLIGHT_MAX_FAILURES consecutive
@@ -47,7 +61,7 @@ class ServerDialHandler:
         self.dials = {}
 
         logger.debug("Retrieving list of dials")
-        self._reload_dials(True)
+        self.rebuild_dials(self.dial_driver.get_dial_list(True))
 
         logger.debug("Reconfiguring dials with stored behaviour")
         self._send_db_config_to_dials()
@@ -80,13 +94,15 @@ class ServerDialHandler:
             logger.error(f"Dial {dial_uid} does not exist in dial list.")
         return dial
 
-    def _reload_dials(self, rescan=False):
-        # The hub addresses dials by bus index; the API uses the UID.
-        dials = self.dial_driver.get_dial_list(rescan)
+    def rebuild_dials(self, dials):
+        """Replace the records with one per scanned dial, filled from the database.
 
-        if len(dials)<=0:
+        @param dials {bus index: UID} from a bus scan; empty keeps the current records
+        @returns the records
+        """
+        if not dials:
             logger.error("No dials connected to the bus!")
-            return
+            return self.dials
 
         # Rebuild from the current bus scan so unplugged dials leave the API's dial list.
         refreshed = {}
@@ -96,7 +112,7 @@ class ServerDialHandler:
                 'index': str(index),
                 'value': 0,
                 'backlight': {'red': 0, 'green': 0, 'blue': 0, 'white': 0},
-                'image_file': self._check_upload_for_dial_image(uid),
+                'image_file': dial_image_file(uid),
                 'value_changed': False,
                 'backlight_changed': True,
                 'image_changed': False,
@@ -106,6 +122,7 @@ class ServerDialHandler:
             self._clear_delivery_state(dial, 'backlight')
             refreshed[uid] = dial
         self.dials = refreshed
+        return self.dials
 
     def _send_db_config_to_dials(self):
         for uid, dial in self.dials.items():
@@ -114,16 +131,8 @@ class ServerDialHandler:
             logger.debug(f"\tDial:{easing['dial_step']}% per {easing['dial_period']}ms")
             logger.debug(f"\tBacklight {easing['backlight_step']}% {easing['backlight_period']}ms")
             for target in ('dial', 'backlight'):
-                self.dial_set_easing(uid, target, step=easing[f'{target}_step'],
-                                     period=easing[f'{target}_period'], persist=False)
-
-    def _check_upload_for_dial_image(self, dial_uid):
-        # Absolute, because a reset hands it to the driver, which must not resolve it against the CWD.
-        filepath = os.path.join(UPLOAD_DIR, f'img_{dial_uid}')
-        if os.path.exists(filepath):
-            return filepath
-
-        return os.path.join(UPLOAD_DIR, 'img_blank')
+                self.dial_send_easing(uid, target, step=easing[f'{target}_step'],
+                                      period=easing[f'{target}_period'])
 
     def _send(self, dial, kind, value):
         index = dial['index']
@@ -216,13 +225,16 @@ class ServerDialHandler:
                 dial['image_changed'] = False
 
     def provision_dials(self, num_attempts = 3):
+        """Address new dials on the bus, then rescan it. Pass the result to rebuild_dials.
+
+        @returns {bus index: UID} for the dials now on the bus
+        """
         logger.debug(f"Provisioning new dials (with {num_attempts} attempts)")
         for _ in range(num_attempts):
             self.dial_driver.provision_dials()
             sleep(0.2)
         logger.debug("Retrieving list of dials")
-        self._reload_dials(True)
-        return self.get_dial_info()
+        return self.dial_driver.get_dial_list(True)
 
     def reset_all_devices(self):
         """Ask the hub to reset every dial on the bus.
@@ -302,15 +314,14 @@ class ServerDialHandler:
         self.dial_driver.dial_calibrate(dial['index'], self._convert_to_int(value), fullScale)
         return True
 
-    def dial_set_easing(self, dial_uid, target, step=None, period=None, persist=True):
-        """Send and record the easing for `target`, 'dial' (needle) or 'backlight'.
+    def dial_send_easing(self, dial_uid, target, step=None, period=None):
+        """Send the easing for `target`, 'dial' (needle) or 'backlight'. Pass the result to dial_store_easing.
 
-        @param persist also store the sent fields in the database
-        @returns False if the dial is not on the bus
+        @returns the sent easing fields, or None if the dial is not on the bus
         """
         dial = self._get_dial(dial_uid)
         if dial is None:
-            return False
+            return None
 
         sent = {}
         for field, value in ((f'{target}_step', step), (f'{target}_period', period)):
@@ -320,12 +331,16 @@ class ServerDialHandler:
             # Driver setters are dial_easing_<field>, e.g. dial_easing_backlight_step.
             getattr(self.dial_driver, f'dial_easing_{field}')(dial['index'], value)
             sent[field] = value
+        return sent
 
-        dial['easing'] = {**dial['easing'], **sent}
-        if persist and sent:
+    def dial_store_easing(self, dial_uid, sent):
+        """Record easing fields returned by dial_send_easing and store them in the database."""
+        dial = self._get_dial(dial_uid)
+        if dial is not None:
+            dial['easing'] = {**dial['easing'], **sent}
+        if sent:
             self.server_config.update_dial_db_cell_with_dict(
                 dial_uid, {f'easing_{field}': value for field, value in sent.items()})
-        return True
 
     def dial_set_backlight(self, dial_uid, red, green, blue, white):
         dial = self._get_dial(dial_uid)
@@ -360,23 +375,35 @@ class ServerDialHandler:
         dial['dial_name'] = name
         return True
 
-    def dial_reload_info_from_hardware(self, dial_uid):
+    def dial_read_info_from_hardware(self, dial_uid):
+        """Read a dial's firmware info and easing. Pass the result to dial_store_info.
+
+        @returns {info field: value, 'easing': {...}}, or None if the dial is not on the bus
+        """
         dial = self._get_dial(dial_uid)
         if dial is None:
-            return False
+            return None
 
         index = int(dial['index'])
-        info = {
+        return {
             'fw_hash': self.dial_driver.dial_get_fw_hash(index),
             'fw_version': self.dial_driver.dial_get_fw_version(index),
             'hw_version': self.dial_driver.dial_get_hw_version(index),
             'protocol_version': self.dial_driver.dial_get_protocol_version(index),
+            'easing': self.dial_driver.dial_easing_get_config(index),
         }
-        easing = self.dial_driver.dial_easing_get_config(index)
+
+    def dial_store_info(self, dial_uid, info):
+        """Record info returned by dial_read_info_from_hardware and store it in the database.
+
+        @returns the dial record, or False if `info` is None or the dial is not on the bus
+        """
+        dial = self._get_dial(dial_uid) if info else None
+        if dial is None:
+            return False
 
         dial.update(info)
-        dial['easing'] = easing
-        row = {DB_COLUMNS[field]: value for field, value in info.items()}
-        row.update({f'easing_{field}': easing[field] for field in EASING_FIELDS})
+        row = {DB_COLUMNS[field]: value for field, value in info.items() if field != 'easing'}
+        row.update({f'easing_{field}': info['easing'][field] for field in EASING_FIELDS})
         self.server_config.update_dial_db_cell_with_dict(dial_uid, row)
         return dial

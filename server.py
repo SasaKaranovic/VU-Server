@@ -1,6 +1,7 @@
 import sys
 import os
 import signal
+import asyncio
 import argparse
 import zlib
 import re
@@ -11,7 +12,7 @@ from tornado.web import Application, RequestHandler, Finish, StaticFileHandler
 from tornado.ioloop import IOLoop, PeriodicCallback
 from dial_driver import DialSerialDriver
 from server_config import ServerConfig
-from server_dial_handler import ServerDialHandler
+from server_dial_handler import ServerDialHandler, UPLOAD_DIR, dial_image_path, dial_image_file
 from vu_notifications import notify
 from serial.serialutil import SerialException
 
@@ -23,6 +24,24 @@ WEB_ROOT = os.path.join(BASEDIR_PATH, 'www')
 STATUS_FIELDS = ('uid', 'index', 'dial_name', 'value', 'backlight', 'image_file', 'easing',
                  'fw_hash', 'fw_version', 'hw_version', 'protocol_version',
                  'value_changed', 'backlight_changed', 'image_changed')
+
+# Blanking the dials on shutdown gives up after this many seconds, so a hung
+# bus cannot outlast the supervisor's stop timeout.
+SHUTDOWN_TIMEOUT = 2
+
+
+def image_crc(data):
+    return "%08X" % zlib.crc32(data)
+
+
+def file_crc(filepath):
+    """@returns the file's CRC32 as 8 hex digits, or "00000000" if it does not exist."""
+    if not os.path.exists(filepath):
+        logger.error(f"File {filepath} does not exist!")
+        return "00000000"
+    with open(filepath, 'rb') as fh:
+        return image_crc(fh.read())
+
 
 class BaseHandler(RequestHandler):
     # Credential prepare() demands: None, 'key' (any API key), 'dial' (an API
@@ -38,7 +57,6 @@ class BaseHandler(RequestHandler):
         # is fine for correctness -- only production needs the serialization
         # guarantee of a single worker.
         self.executor = executor # pylint: disable=attribute-defined-outside-init
-        self.upload_path = os.path.join(os.path.dirname(__file__), 'upload') # pylint: disable=attribute-defined-outside-init
 
     async def run_blocking(self, func, *args, **kwargs):
         # Run a blocking (serial) call off the IOLoop thread and await its result.
@@ -81,20 +99,6 @@ class BaseHandler(RequestHandler):
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
-
-    def get_file_crc(self, filepath):
-        if not os.path.exists(filepath):
-            logger.error(f"File {filepath} does not exist!")
-            return "00000000"
-
-        with open(filepath, 'rb') as fh:
-            fileCrc = 0
-            while True:
-                s = fh.read(65536)
-                if not s:
-                    break
-                fileCrc = zlib.crc32(s, fileCrc)
-        return "%08X" % (fileCrc & 0xFFFFFFFF)
 
 
 class Device_Status_Handler(BaseHandler):
@@ -149,83 +153,42 @@ class Device_Set_Image(BaseHandler):
     auth = 'dial'
 
     def post(self, dial_uid):
-        get_force = self.get_argument('force', False)
-
-        force_img_update = self._arg_is_true(get_force)
-
+        force_img_update = self._arg_is_true(self.get_argument('force', False))
         logger.debug(f"Request:SET_IMAGE - Device:{dial_uid}")
 
-        # Store new image
-        img_file = self.handle_image_upload(dial_uid)
-        if not img_file:
-            logger.error("Handle image upload failed")
-            return self.send_response(status='fail', message='image upload failed', status_code=503)
-
-        current_img = os.path.join(self.upload_path, f'img_{dial_uid}')
-        new_img = os.path.join(self.upload_path, f'tmp_{dial_uid}')
-
-        # If this is a different image from existing one
-        if self.different_image_uploaded(current_img, new_img) or force_img_update:
-
-            # Remove existing image (if exists)
-            if os.path.exists(current_img):
-                os.remove(current_img)
-            # Move (rename) new image and set as current
-            os.rename(new_img, current_img)
-
-
-            if self.handler.dial_set_image(dial_uid=dial_uid, image_file=current_img):
-                return self.send_response(status='ok', status_code=201)
-            return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
-
-        logger.debug(f"Skipping dial `{dial_uid}` image update. Contents already match.")
-        return self.send_response(status='ok', message='Image CRC already maches existing one. Skipping update.')
-
-    def handle_image_upload(self, dial_uid):
-        self.make_upload_folder()
-        image_data = self.request.files.get('imgfile', None)
-        if image_data is None:
+        image_data = self.request.files.get('imgfile')
+        if not image_data:
             logger.error("imgfile field missing from request.")
-            return None
+            return self.send_response(status='fail', message='image upload failed', status_code=503)
+        body = image_data[0]['body']
 
-        # First upload image as temporary
-        file_path = os.path.join(self.upload_path, f'tmp_{dial_uid}')
+        current_img = dial_image_path(dial_uid)
+        if (not force_img_update and os.path.exists(current_img)
+                and image_crc(body) == file_crc(current_img)):
+            logger.debug(f"Skipping dial `{dial_uid}` image update. Contents already match.")
+            return self.send_response(status='ok', message='Image CRC already maches existing one. Skipping update.')
 
-        with open(file_path, 'wb') as img:
-            img.write(image_data[0]['body'])
+        # Write beside the target and rename, so readers never see a partial image.
+        new_img = os.path.join(os.path.dirname(current_img), f'tmp_{dial_uid}')
+        with open(new_img, 'wb') as img:
+            img.write(body)
+        os.replace(new_img, current_img)
 
-        return file_path
-
-    def different_image_uploaded(self, old, new):
-        if self.get_file_crc(old) != self.get_file_crc(new):
-            return True
-        return False
-
-    def make_upload_folder(self):
-        if not os.path.exists(self.upload_path):
-            os.makedirs(self.upload_path)
+        if self.handler.dial_set_image(dial_uid=dial_uid, image_file=current_img):
+            return self.send_response(status='ok', status_code=201)
+        return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
 class Dial_Get_Image(BaseHandler):
     auth = 'dial'
 
     def get(self, gaugeUID):
         self.set_header("Content-Type", "image/png")
-
-        logger.debug("Request: GET_IMAGE")
-
-        dial_image = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
-
-        if os.path.exists(dial_image):
-            filepath = dial_image
-            logger.debug(f"Serving image from {filepath}")
-        else:
-            filepath = os.path.join(os.path.dirname(__file__), 'upload', 'img_blank')
-            logger.debug(f"Serving DEFAULT image from {filepath}")
+        filepath = dial_image_file(gaugeUID)
+        logger.debug(f"Request: GET_IMAGE - serving {filepath}")
 
         try:
             with open(filepath, 'rb') as f:
-                data = f.read()
-                self.write(data)
+                self.write(f.read())
             return self.finish()
         except IOError as e:
             logger.error(e)
@@ -236,11 +199,7 @@ class Dial_Get_Image_CRC(BaseHandler):
 
     def get(self, gaugeUID):
         logger.debug("Request: GET_IMAGE_CRC")
-
-        img_file = os.path.join(os.path.dirname(__file__), 'upload', f'img_{gaugeUID}')
-
-        crc = self.get_file_crc(img_file)
-        return self.send_response(status='ok', data=crc)
+        return self.send_response(status='ok', data=file_crc(dial_image_path(gaugeUID)))
 
 class Dial_Get_List(BaseHandler):
     auth = 'key'
@@ -269,7 +228,8 @@ class Dial_Provision(BaseHandler):
 
         logger.debug("Request: PROVISION_NEW_DIALS")
 
-        dials = await self.run_blocking(self.handler.provision_dials)
+        scan = await self.run_blocking(self.handler.provision_dials)
+        dials = self.handler.rebuild_dials(scan)
         logger.debug(dials)
 
         return self.send_response(status='ok', data=dials)
@@ -323,8 +283,8 @@ class Dial_Reload_Device_Info(BaseHandler):
 
         logger.debug(f"Request:GET_INFO - Device:{gaugeUID}")
 
-        dial_info = await self.run_blocking(self.handler.dial_reload_info_from_hardware, gaugeUID)
-        return self.send_response(status='ok', data=dial_info)
+        info = await self.run_blocking(self.handler.dial_read_info_from_hardware, gaugeUID)
+        return self.send_response(status='ok', data=self.handler.dial_store_info(gaugeUID, info))
 
 class Dial_Set_Calibration(BaseHandler):
     auth = 'dial'
@@ -356,9 +316,11 @@ class Dial_Set_Easing(BaseHandler):
         except (TypeError, ValueError):
             return self.send_response(status='fail', message="`step` and `period` must be integers.", status_code=400)
 
-        if await self.run_blocking(self.handler.dial_set_easing, gaugeUID, target, step=step, period=period):
-            return self.send_response(status='ok')
-        return self.send_response(status='fail', message="Device not present", status_code=406)
+        sent = await self.run_blocking(self.handler.dial_send_easing, gaugeUID, target, step=step, period=period)
+        if sent is None:
+            return self.send_response(status='fail', message="Device not present", status_code=406)
+        self.handler.dial_store_easing(gaugeUID, sent)
+        return self.send_response(status='ok')
 
 # -- Keys --
 class Admin_Keys_List(BaseHandler):
@@ -451,11 +413,9 @@ def make_routes(handlers_config):
 
 class Dial_API_Service:
     def __init__(self):
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        signal.signal(signal.SIGINT, self.signal_handler)
-
         logger.info("Loading server config...")
         self.config = ServerConfig('config.yaml')
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
 
         # If config contains COM port, use it. Otherwise try to find it
         hardware_config = self.config.get_hardware_config()
@@ -474,33 +434,21 @@ class Dial_API_Service:
         self.dial_driver = DialSerialDriver(self.serialPort)
         self.dial_handler = ServerDialHandler(self.dial_driver, self.config)
 
-        # All blocking serial I/O (request handlers *and* the periodic updater)
-        # runs on this single dedicated worker thread. One worker keeps serial
-        # access serialized -- so the periodic loop and an offloaded handler
-        # never talk to the bus at once -- while keeping the Tornado IOLoop free
-        # to serve other requests instead of freezing on the serial port.
+        # All blocking serial I/O (request handlers, the periodic updater and
+        # shutdown) runs on this single worker thread, which keeps bus access
+        # serialized and the IOLoop free to serve requests.
         self.serial_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='serial')
 
-        # If we don't see any dials, try looking/provisioning some. Only do this
-        # when the bus is genuinely empty -- the old `<= 1` check re-ran the
-        # provisioning scan on every startup whenever a single dial was present.
+        # Provision only when the bus is empty.
         if len(self.dial_handler.dials) == 0:
             logger.info("No dials found. Searching the bus for new ones...")
-            self.dial_handler.provision_dials(num_attempts=3)
+            self.dial_handler.rebuild_dials(self.dial_handler.provision_dials(num_attempts=3))
 
         handlers_config = { "handler":self.dial_handler, "config":self.config, "executor":self.serial_executor }
         self.handlers = make_routes(handlers_config)
 
-    def signal_handler(self, signal, frame):
-        print('\r\nYou pressed Ctrl+C!')
-
-        def do_shutdown():
-            self.shut_down_dials()
-            self.shutdown_server()
-        IOLoop.current().add_callback_from_signal(do_shutdown)
-
     def shut_down_dials(self):
-        print("Shutting down dials...")
+        logger.info("Shutting down dials...")
         try:
             for dial in self.dial_driver.dials:
                 logger.debug(f"Shutting down dial {dial}")
@@ -511,17 +459,11 @@ class Dial_API_Service:
             logger.error("Failed to gracefully shut down dials")
             logger.error(f"Error: {e}")
 
-    def shutdown_server(self):
-        logger.info('Stopping API server')
-        logger.info('Will shutdown in 3 seconds ...')
-        io_loop = IOLoop.instance()
-
-        def stop_loop():
-            io_loop.stop()
-            logger.info('Shutdown')
-        io_loop.call_later(3, stop_loop)
-
     def run_forever(self):
+        asyncio.run(self._serve())
+
+    async def _serve(self):
+        """Serve the API until SIGTERM or SIGINT, then blank the dials and return."""
         logger.info("Karanovic Research Dials - Starting API server")
         app = Application(self.handlers)
 
@@ -530,22 +472,38 @@ class Dial_API_Service:
         # An empty hostname binds all interfaces.
         hostname = server_config['hostname']
         logger.info(f"VU1 API server is listening on http://{hostname or '0.0.0.0'}:{port}")
-        app.listen(port, address=hostname)
+        http_server = app.listen(port, address=hostname)
 
         logger.info(f"Provide master key '{server_config['master_key']}' to your main application")
         logger.info("to allow it to manage this server and the VU dials.")
 
-        # Run the periodic dial update on the serial worker thread so its
-        # blocking serial writes (value/backlight/image, incl. chunked image
-        # sends with their inter-chunk sleeps) never freeze the IOLoop.
+        loop = asyncio.get_running_loop()
+
         async def periodic_dial_update():
-            await IOLoop.current().run_in_executor(self.serial_executor,
-                                                   self.dial_handler.periodic_dial_update)
+            await loop.run_in_executor(self.serial_executor, self.dial_handler.periodic_dial_update)
 
         pc = PeriodicCallback(periodic_dial_update, server_config['dial_update_period'])
         pc.start()
 
-        IOLoop.instance().start()
+        # The handler only wakes the loop: it can interrupt the main thread
+        # anywhere, so it must not log or touch the bus itself.
+        stop = asyncio.Event()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, lambda _signum, _frame: loop.call_soon_threadsafe(stop.set))
+        await stop.wait()
+
+        logger.info('Stopping API server')
+        pc.stop()
+        http_server.stop()
+        # Queued behind any in-flight serial work, and the last job the
+        # executor accepts, so nothing can re-light the dials afterwards.
+        blanked = loop.run_in_executor(self.serial_executor, self.shut_down_dials)
+        self.serial_executor.shutdown(wait=False)
+        try:
+            await asyncio.wait_for(blanked, SHUTDOWN_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.error(f"Dials not blanked within {SHUTDOWN_TIMEOUT}s")
+        logger.info('Shutdown')
 
 
 def main(cmd_args=None):
