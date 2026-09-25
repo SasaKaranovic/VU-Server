@@ -3,9 +3,6 @@
 ; DIRSOURCE -> Repository path
 ; makensis \DINSTALLEROUTPUT="${{ github.workspace }}/Artifacts/VU1-Installer.exe" \DDIRDIST="${{ github.workspace }}\dist" \DDIRSOURCE="${{ github.workspace }}" installer\install.nsi
 
-# If you change the names "app.exe", "logo.ico", or "license.rtf" you should do a search and replace - they
-# show up in a few places.
-# All the other settings can be tweaked by editing the !defines at the top of this script
 !define APPNAME "VUDials Server"
 !define COMPANYNAME "KaranovicResearch"
 !define DESCRIPTION "Server application required for VU Dials operation"
@@ -24,6 +21,9 @@
 # Executable
 !define MAINEXE VUServer.exe
 
+# Add/Remove Programs registry key
+!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}"
+
 ;--------------------------------
 ;Include Modern UI
 
@@ -40,9 +40,6 @@
 
   ;Default installation folder
   InstallDir "$PROGRAMFILES\KaranovicResearch\VUDials"
-
-  ;Get installation folder from registry if available
-  InstallDirRegKey HKCU "Software\VUDials" ""
 
   ;Request application privileges for Windows Vista
   RequestExecutionLevel admin
@@ -76,7 +73,6 @@ Section "VUDials Server" VUDSERVER
 
   SetOutPath "$INSTDIR"
 
-  ;ADD YOUR OWN FILES HERE...
   File /r "${DIRDIST}\*"
   File "${DIRSOURCE}\installer\inc\icon.ico"
 
@@ -84,30 +80,24 @@ Section "VUDials Server" VUDSERVER
   createDirectory "$SMPROGRAMS\${COMPANYNAME}"
   createShortCut "$SMPROGRAMS\${COMPANYNAME}\${APPNAME}.lnk" "$INSTDIR\${MAINEXE}" "" "$INSTDIR\icon.ico"
 
-  ; Run server on Windows start
-  ;WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}" "$INSTDIR\${MAINEXE}"
-
-  ;Store installation folder
-  ;WriteRegStr HKCU "Software\VUDials\install_path" "" $INSTDIR
-
   # Registry information for add/remove programs
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayName" "${COMPANYNAME} - ${APPNAME} - ${DESCRIPTION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "InstallLocation" "$\"$INSTDIR$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayIcon" "$\"$INSTDIR\icon.ico$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "Publisher" "$\"${COMPANYNAME}$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "HelpLink" "$\"${HELPURL}$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "URLUpdateInfo" "$\"${UPDATEURL}$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "URLInfoAbout" "$\"${ABOUTURL}$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayVersion" "$\"${VERSIONMAJOR}.${VERSIONMINOR}.${VERSIONBUILD}$\""
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "VersionMajor" ${VERSIONMAJOR}
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "VersionMinor" ${VERSIONMINOR}
+  WriteRegStr HKLM "${UNINSTKEY}" "DisplayName" "${COMPANYNAME} - ${APPNAME} - ${DESCRIPTION}"
+  WriteRegStr HKLM "${UNINSTKEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+  WriteRegStr HKLM "${UNINSTKEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
+  WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation" "$\"$INSTDIR$\""
+  WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon" "$\"$INSTDIR\icon.ico$\""
+  WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "$\"${COMPANYNAME}$\""
+  WriteRegStr HKLM "${UNINSTKEY}" "HelpLink" "$\"${HELPURL}$\""
+  WriteRegStr HKLM "${UNINSTKEY}" "URLUpdateInfo" "$\"${UPDATEURL}$\""
+  WriteRegStr HKLM "${UNINSTKEY}" "URLInfoAbout" "$\"${ABOUTURL}$\""
+  WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "$\"${VERSIONMAJOR}.${VERSIONMINOR}.${VERSIONBUILD}$\""
+  WriteRegDWORD HKLM "${UNINSTKEY}" "VersionMajor" ${VERSIONMAJOR}
+  WriteRegDWORD HKLM "${UNINSTKEY}" "VersionMinor" ${VERSIONMINOR}
   # There is no option for modifying or repairing the install
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "NoModify" 1
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "NoRepair" 1
+  WriteRegDWORD HKLM "${UNINSTKEY}" "NoModify" 1
+  WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
   # Set the INSTALLSIZE constant (!defined at the top of this script) so Add/Remove Programs can accurately report the size
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "EstimatedSize" ${INSTALLSIZE}
+  WriteRegDWORD HKLM "${UNINSTKEY}" "EstimatedSize" ${INSTALLSIZE}
 
   ;Create uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -136,13 +126,12 @@ SectionEnd
 
 Section "Uninstall"
 
-  ; Install dir
-  Delete "$INSTDIR\*.*"
-  Delete "$INSTDIR\Uninstall.exe"
-  Delete "$smprograms\VUDials\"
   RMDir /r "$INSTDIR"
 
-  ; Remove windows start
+  Delete "$SMPROGRAMS\${COMPANYNAME}\${APPNAME}.lnk"
+  RMDir "$SMPROGRAMS\${COMPANYNAME}"
+
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VUServer"
+  DeleteRegKey HKLM "${UNINSTKEY}"
 
 SectionEnd

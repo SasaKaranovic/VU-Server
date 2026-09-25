@@ -5,47 +5,38 @@ on:
     branches:
     - 'build_*'
     - 'master'
+    tags:
+    - 'v*'
   pull_request:
     paths:
       - "**.py"
       - "www/**"
       - "upload/**"
+      - "requirements*.txt"
       - ".github/workflows/pyinstaller.yaml"
 
 jobs:
-  Installer:
+  Build:
 
     runs-on: windows-latest
 
-    env:
-      App_Packages_Archive: VU1_Server
+    permissions:
+      contents: read
 
     steps:
     - uses: actions/checkout@v5
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-        update-environment: true
-        cache: 'pip' # caching pip dependencies
+        cache: 'pip'
 
-    # Install python requirements
-    - run: pip install -r requirements.txt
-
-    # Create artifacts folder
-    - name: Create Artifact Folder
-      run: New-Item -Path '${{ github.workspace }}' -Name "Artifacts" -ItemType "directory"
-
-    - name: Set pythonpath
-      run: |
-        echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+    - run: pip install -r requirements-build.txt
 
     - name: Add version stamp
-      run: |
-        python3 ${{ github.workspace }}/make_version.py
+      run: python make_version.py
 
-    # PyInstaller
     - run: >
-          pyinstaller.exe --name VUServer
+          pyinstaller --name VUServer
           --distpath="${{ github.workspace }}/Artifacts"
           --clean
           --path="${{ github.workspace }}"
@@ -55,40 +46,42 @@ jobs:
           --add-data="www/assets/img/*;www/assets/img"
           --add-data="www/assets/js/*;www/assets/js"
           --add-data="www/views/*;www/views"
-          --add-data="www/*.png;www/"
           --add-data="www/*.html;www/"
           --add-data="www/*.ico;www/"
           --add-data="upload/img_blank;upload/"
-          --hiddenimport="pywin32"
-          --hiddenimport="win32timezone"
           --uac-admin
           --noconsole
           server.py
 
-    # Upload build artifacts
     - name: Upload build artifact
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
-        name: ${{ env.App_Packages_Archive }}
+        name: VU1_Server
         path: ${{ github.workspace }}/Artifacts/VUServer/*
       if: ${{ always() }}
 
-    # We are currently limited to offline signing.
-    # So we are skipping the online installer creation
-    ## Install NSIS
-    #- name: Install NSIS
-    #  run: |
-    #    choco install nsis
-    #
-    #- name: Create installer
-    #  run: |
-    #    makensis /DINSTALLEROUTPUT="${{ github.workspace }}\Artifacts\VU1-Installer.exe" /DDIRDIST="${{ github.workspace }}\Artifacts\VUServer" /DDIRSOURCE="${{ github.workspace }}" ${{ github.workspace }}\installer\install.nsi
-    #
-    #
-    ## Upload installer
-    #- name: Upload build artifact
-    #  uses: actions/upload-artifact@v6
-    #  with:
-    #    name: ${{ env.App_Packages_Archive }}_installer.exe
-    #    path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe
-    #  if: ${{ always() }}
+  Release:
+
+    needs: Build
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: VU1_Server
+        path: VUServer
+
+    - run: zip -r VUServer.zip VUServer
+
+    - name: Release
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: VUServer.zip
+        body: "Draft release"
+        draft: true
+        allowUpdates: true

@@ -24,14 +24,6 @@ jobs:
       with:
         python-version: "3.12"
     - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pylint
-        pip install pylint-exit
-        pip install -r requirements.txt
+      run: pip install pylint -r requirements.txt
     - name: Run Pylint on code
-      run: |
-        pylint --rc-file=pylintrc --disable=import-error $(git ls-files '*.py') || pylint-exit --error-fail $?
-        if [ $? -ne 0 ]; then
-          exit 1
-        fi
+      run: pylint --rc-file=pylintrc --disable=import-error $(git ls-files '*.py')

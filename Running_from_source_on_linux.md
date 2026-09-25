@@ -32,24 +32,20 @@ On some distributions you will need to explicitly allow access to `/dev/ttyUSBx`
 
 There are multiple ways to do this.
 
-You can temporarily grant access by running `sudo chmod 666 /dev/ttyUSB0`.
-
-But you will have to run this command every time you re-plug in the hub, which is not very practical.
-
-More permanent solution involves creating a udev rule
+The simplest fix is to add your user to the group that owns serial ports, then log out and back in.
 
 ```bash
-# navigate to rules.d directory
-cd /etc/udev/rules.d
-#create a new rule file
-sudo touch vu-rule.rules
-# open the file
-sudo nano vu-rule.rules
-# add the following
-KERNEL=="ttyUSB0", MODE="0666"
+sudo usermod -aG dialout $USER
 ```
 
-Please note that you will have to reboot your machine in order for new udev rules to take effect.
+On distributions where that group is not `dialout`, check the group with `ls -l /dev/ttyUSB0`.
+
+Alternatively, a udev rule matching the hub's USB IDs grants access on any port. It applies without a reboot.
+
+```bash
+echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", MODE="0666"' | sudo tee /etc/udev/rules.d/99-vu1.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
 
 
 # Example command line usage
@@ -74,7 +70,7 @@ Let's say we want to set the dial with the UID `3E0075000650564139323920` to `50
 We can make a simple GET request using `wget` (or `curl` if you prefer):
 
 ```bash
-wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value=50&key=cTpAWYuRpA2zx75Yh961C" ; echo
+wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value=50&key=cTpAWYuRpA2zx75Yh961Cg" ; echo
 ```
 
 You can use pipe redirects in your terminal to redirect output of applications to VU dials.
@@ -88,7 +84,7 @@ echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')]
 This command will output an integer that represents CPU usage in percentage. We can then forward this information to VU server using pipe redirects
 
 ```bash
-echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')] | xargs -I{} wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value={}&key=cTpAWYuRpA2zx75Yh961C"; echo
+echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')] | xargs -I{} wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value={}&key=cTpAWYuRpA2zx75Yh961Cg"; echo
 ```
 
 Please keep in mind that this is a very "simple" example (and yet looks somewhat complicated), but the main idea is that you can easily redirect output of any application on your system and send it to VU Server to have it displayed on your VU1 dials.
