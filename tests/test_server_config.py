@@ -47,3 +47,15 @@ def test_default_port_matches_shipped_config(make_config):
     config = make_config("")
 
     assert config.get_server_config()['port'] == 5340
+
+
+def test_empty_master_key_shows_missing_key_warning(make_config, monkeypatch):
+    # `master_key:` with no value loads as None, which crashed startup with a
+    # NOT NULL IntegrityError instead of reaching the "Missing Key" warning.
+    warnings = []
+    monkeypatch.setattr(server_config, 'show_warning_msg',
+                        lambda title, *a, **k: warnings.append(title))
+
+    make_config(VALID_CONFIG.replace("master_key: TESTMASTERKEY", "master_key:"))
+
+    assert warnings == ["Missing Key"]

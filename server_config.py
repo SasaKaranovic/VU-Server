@@ -74,7 +74,7 @@ class ServerConfig:
         elif ('hostname' not in cfg['server'] or
              'port' not in cfg['server'] or
              'communication_timeout' not in cfg['server'] or
-             'master_key' not in cfg['server']):
+             not cfg['server'].get('master_key')):
             show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
                              "must have `hostname`, `port`, `communication_timeout` and `master_key` entries!\r\n"\
                              "Using defaul values for this session.")
