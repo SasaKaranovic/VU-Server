@@ -39,3 +39,11 @@ def test_update_api_key_refreshes_key_list(make_config):
 
     assert config.update_api_key(key, 'New name') is True
     assert config.list_keys()[key]['key_name'] == 'New name'
+
+
+def test_default_port_matches_shipped_config(make_config):
+    # With no usable config the server must use the same port as config.yaml
+    # and the fallback in server.py.
+    config = make_config("")
+
+    assert config.get_server_config()['port'] == 5340

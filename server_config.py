@@ -9,7 +9,7 @@ import database as db
 class ServerConfig:
     # Shared, read-only defaults. Callers must copy these before storing them on
     # an instance so per-instance mutation never leaks back into the defaults.
-    server_default = {'hostname': 'localhost', 'port': 3000, 'communication_timeout': 10, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
+    server_default = {'hostname': 'localhost', 'port': 5340, 'communication_timeout': 10, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
     hardware_default = {'port': None }
 
     def __init__(self, config_file='config.yaml'):
