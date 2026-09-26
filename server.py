@@ -684,6 +684,7 @@ class Dial_API_Service(Application):
             (r"/api/v0/admin/keys/create", Admin_Keys_Create, handlers_config),
             (r"/api/v0/admin/keys/remove", Admin_Keys_Remove, handlers_config),
             (r"/api/v0/admin/keys/update", Admin_Keys_Update, handlers_config),
+            (r"/api/.*", Default_404_Handler),
             (r"/", FileHandler),
             (r'/(.*)', StaticFileHandler, {'path': WEB_ROOT}),
         ]
