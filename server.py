@@ -416,8 +416,9 @@ class Dial_Set_Calibration(BaseHandler):
             return
 
         if dac_calibration is not None:
-            await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False)
-            return self.send_response(status='ok', message="Calibration value updated", status_code=201)
+            if await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False):
+                return self.send_response(status='ok', message="Calibration value updated", status_code=201)
+            return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
         return self.send_response(status='fail', message="Device not present", status_code=406)
 
 class Dial_Set_Easing_Dial(BaseHandler):
