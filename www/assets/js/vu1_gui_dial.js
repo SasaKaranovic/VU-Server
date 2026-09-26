@@ -50,8 +50,13 @@ $(".vu1-behaviour-button").on( "click", function() {
     const bl_period = $(this).data('sk-backlight-period');
     const bl_step = $(this).data('sk-backlight-step');
 
-    gui_set_dial_easing(dial_period, dial_step);
-    gui_set_backlight_easing(bl_period, bl_step);
+    // Reload only after both requests finish so the page shows both updates.
+    $.when(
+        gui_set_dial_easing(dial_period, dial_step),
+        gui_set_backlight_easing(bl_period, bl_step)
+    ).done(function() {
+        window.location.reload(true);
+    });
 });
 
 
@@ -76,19 +81,13 @@ $("#dial-reset-device").on( "click", function() {
 function gui_set_dial_easing(period, step)
 {
     const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/easing/dial?step='+ step +'&period='+ period +'&key='+ API_MASTER_KEY )
-    .done(function( data ) {
-        window.location.reload(true);
-    });
+    return $.get( '/api/v0/dial/' + dial_uid  + '/easing/dial?step='+ step +'&period='+ period +'&key='+ API_MASTER_KEY );
 }
 
 function gui_set_backlight_easing(period, step)
 {
     const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/easing/backlight?step='+ step +'&period='+ period +'&key='+ API_MASTER_KEY )
-    .done(function( data ) {
-        window.location.reload(true);
-    });
+    return $.get( '/api/v0/dial/' + dial_uid  + '/easing/backlight?step='+ step +'&period='+ period +'&key='+ API_MASTER_KEY );
 }
 
 function gui_reset_dial()
