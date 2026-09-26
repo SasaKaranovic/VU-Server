@@ -215,11 +215,8 @@ class Device_Set_Image(BaseHandler):
         # If this is a different image from existing one
         if self.different_image_uploaded(current_img, new_img) or force_img_update:
 
-            # Remove existing image (if exists)
-            if os.path.exists(current_img):
-                os.remove(current_img)
-            # Move (rename) new image and set as current
-            os.rename(new_img, current_img)
+            # Atomically replace the existing image (if any) with the new one
+            os.replace(new_img, current_img)
 
 
             if self.handler.dial_set_image(dial_uid=dial_uid, image_file=current_img):
