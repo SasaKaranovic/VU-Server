@@ -139,7 +139,8 @@ Section "Uninstall"
   ; Install dir
   Delete "$INSTDIR\*.*"
   Delete "$INSTDIR\Uninstall.exe"
-  Delete "$smprograms\VUDials\"
+  Delete "$SMPROGRAMS\${COMPANYNAME}\${APPNAME}.lnk"
+  RMDir "$SMPROGRAMS\${COMPANYNAME}"
   RMDir /r "$INSTDIR"
 
   ; Remove windows start
