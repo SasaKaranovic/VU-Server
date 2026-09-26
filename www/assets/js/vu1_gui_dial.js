@@ -130,7 +130,7 @@ function gui_update_dial_name(name)
     const dial_uid = $.urlParam('uid');
 
     $.ajax({
-      url  : '/api/v0/dial/' + dial_uid  + '/name?name='+ name +'&key='+ API_MASTER_KEY,
+      url  : '/api/v0/dial/' + dial_uid  + '/name?name='+ encodeURIComponent(name) +'&key='+ API_MASTER_KEY,
       type : 'GET',
     })
     .done(function(data, statusText, xhr){
