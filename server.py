@@ -227,6 +227,7 @@ class Device_Set_Image(BaseHandler):
             return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
         logger.debug(f"Skipping dial `{dial_uid}` image update. Contents already match.")
+        os.remove(new_img)
         return self.send_response(status='ok', message='Image CRC already maches existing one. Skipping update.')
 
     def handle_image_upload(self, dial_uid):
