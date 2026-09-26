@@ -1,4 +1,5 @@
 import json
+import zlib
 
 import pytest
 import tornado.testing
@@ -67,3 +68,15 @@ class ImageUploadTestCase(tornado.testing.AsyncHTTPTestCase):
         assert 'Skipping' in body['message']
         assert sorted(p.name for p in self.upload_dir.iterdir()) == ['img_ABC123']
         assert self.fake_handler.images == []
+
+    def test_first_image_with_zero_crc_is_stored(self):
+        # get_file_crc reports a missing file as "00000000", so a first upload
+        # whose real CRC-32 is 0 looked identical to "no image".
+        image = b'png\r\t\xc1\xee'
+        assert zlib.crc32(image) == 0
+
+        response, _ = self._upload(image)
+
+        assert response.code == 201
+        assert (self.upload_dir / 'img_ABC123').read_bytes() == image
+        assert self.fake_handler.images == [('ABC123', str(self.upload_dir / 'img_ABC123'))]

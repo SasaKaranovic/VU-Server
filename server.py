@@ -246,6 +246,9 @@ class Device_Set_Image(BaseHandler):
         return file_path
 
     def different_image_uploaded(self, old, new):
+        # get_file_crc reports a missing file as "00000000", a valid CRC.
+        if not os.path.exists(old):
+            return True
         if self.get_file_crc(old) != self.get_file_crc(new):
             return True
         return False
