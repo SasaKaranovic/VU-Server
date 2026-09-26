@@ -3,9 +3,6 @@
 ; DIRSOURCE -> Repository path
 ; makensis \DINSTALLEROUTPUT="${{ github.workspace }}/Artifacts/VU1-Installer.exe" \DDIRDIST="${{ github.workspace }}\dist" \DDIRSOURCE="${{ github.workspace }}" installer\install.nsi
 
-# If you change the names "app.exe", "logo.ico", or "license.rtf" you should do a search and replace - they
-# show up in a few places.
-# All the other settings can be tweaked by editing the !defines at the top of this script
 !define APPNAME "VUDials Server"
 !define COMPANYNAME "KaranovicResearch"
 !define DESCRIPTION "Server application required for VU Dials operation"
@@ -41,9 +38,6 @@
   ;Default installation folder
   InstallDir "$PROGRAMFILES\KaranovicResearch\VUDials"
 
-  ;Get installation folder from registry if available
-  InstallDirRegKey HKCU "Software\VUDials" ""
-
   ;Request application privileges for Windows Vista
   RequestExecutionLevel admin
 
@@ -76,19 +70,12 @@ Section "VUDials Server" VUDSERVER
 
   SetOutPath "$INSTDIR"
 
-  ;ADD YOUR OWN FILES HERE...
   File /r "${DIRDIST}\*"
   File "${DIRSOURCE}\installer\inc\icon.ico"
 
   # Start Menu
   createDirectory "$SMPROGRAMS\${COMPANYNAME}"
   createShortCut "$SMPROGRAMS\${COMPANYNAME}\${APPNAME}.lnk" "$INSTDIR\${MAINEXE}" "" "$INSTDIR\icon.ico"
-
-  ; Run server on Windows start
-  ;WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}" "$INSTDIR\${MAINEXE}"
-
-  ;Store installation folder
-  ;WriteRegStr HKCU "Software\VUDials\install_path" "" $INSTDIR
 
   # Registry information for add/remove programs
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayName" "${COMPANYNAME} - ${APPNAME} - ${DESCRIPTION}"
@@ -137,8 +124,6 @@ SectionEnd
 Section "Uninstall"
 
   ; Install dir
-  Delete "$INSTDIR\*.*"
-  Delete "$INSTDIR\Uninstall.exe"
   Delete "$smprograms\VUDials\"
   RMDir /r "$INSTDIR"
 
