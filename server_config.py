@@ -182,6 +182,7 @@ class ServerConfig:
         # Update key
         if not self.database.api_key_update(key_uid=key_uid, key_name=key_name):
             return False
+        self.list_keys(reload=True)
         return True
 
     def delete_api_key(self, key_uid):
