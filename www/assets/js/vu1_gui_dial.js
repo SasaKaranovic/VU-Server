@@ -138,7 +138,6 @@ function gui_update_dial_name(name)
         if (status == 201)
         {
             $('#dial-title').text('Name: '+ name);
-            $('#dial-name').text(name);
             $("#dial-server-issue").hide();
             $("#new-dial-name").addClass("is-valid");
         }
@@ -183,7 +182,6 @@ function gui_update_dial_ui()
 
 
         $('#dial-title').text('Name: '+ dial_info['dial_name']);
-        $('#dial-name').text(dial_info['dial_name']);
         $('#dial-uid').text(dial_info['uid']);
         $('#dial-type').text(dial_type);
         $('#dial-fw-version').text(dial_info['fw_version']);

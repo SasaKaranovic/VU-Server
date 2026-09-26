@@ -8,7 +8,6 @@ $(function() {
 
     $("#nav-api").addClass("active");
     gui_update_modal_available_dials();
-    triggerModalGen();
 
     $("#modal-select-all").click(function(){
         gui_modal_select_all_dials(true);
@@ -86,7 +85,7 @@ function gui_modal_select_all_dials(checked)
 
 function gui_update_modal_available_dials()
 {
-    const available_dials = vu1_get_dial_list(false);
+    const available_dials = vu1_get_dial_list();
 
     $('#modal-dials-list').text("");
 
@@ -108,18 +107,9 @@ function gui_update_modal_available_dials()
 }
 
 
-function gui_update_dial_name(name)
-{
-    const dial_uid = $.urlParam('uid');
-    $.get( '/api/v0/dial/' + dial_uid  + '/name?name='+ name +'&key='+ API_MASTER_KEY );
-    $('#dial-title').text('Name: '+ name);
-    $('#dial-name').text(name);
-}
-
-
 function gui_update_api_key_ui()
 {
-    const api_keys = vu1_get_api_keys(false);
+    const api_keys = vu1_get_api_keys();
 
     $.each( api_keys, function( key, val ) {
         $('#table_api_keys').append('<tr>\

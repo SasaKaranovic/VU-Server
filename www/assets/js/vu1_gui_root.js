@@ -40,22 +40,6 @@ $(function () {
 })
 
 
-function create_toast(toast_title, toast_message)
-{
-    var toast = '\
-                    <div class="toast show" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="false" data-bs-toggle="toast">\
-                    <div class="toast-header">\
-                    <strong class="me-auto">'+ toast_title +'</strong>\
-                    <button type="button" class="ms-2 btn-close" data-bs-dismiss="toast" aria-label="Close"></button>\
-                    </div>\
-                    <div class="toast-body">\
-                    '+ toast_message +'\
-                    </div>\
-                    </div>';
-    $("#content").append(toast);
-}
-
-
 function triggerTooltipGen()
 {
     var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -89,37 +73,4 @@ function triggerPopoverGen()
       };
       return new $.fn['popover'].Constructor(popoverTriggerEl, options);
     });
-}
-
-function triggerModalGen()
-{
-    // console.log("triggerModalGen");
-
-    // $('*[data-bs-toggle="modal"]').on('click', function(event) {
-    //     console.log('Click!');
-    //     console.log(this);
-    // });
-
-    // EventHandler.on(document, EVENT_CLICK_DATA_API$2, SELECTOR_DATA_TOGGLE$2, function (event) {
-    //   const target = SelectorEngine.getElementFromSelector(this);
-    //   if (['A', 'AREA'].includes(this.tagName)) {
-    //     event.preventDefault();
-    //   }
-    //   EventHandler.one(target, EVENT_SHOW$4, showEvent => {
-    //     if (showEvent.defaultPrevented) {
-    //       return;
-    //     }
-    //     EventHandler.one(target, EVENT_HIDDEN$4, () => {
-    //       if (isVisible(this)) {
-    //         this.focus();
-    //       }
-    //     });
-    //   });
-    //   const alreadyOpen = SelectorEngine.findOne(OPEN_SELECTOR$1);
-    //   if (alreadyOpen) {
-    //     Modal.getInstance(alreadyOpen).hide();
-    //   }
-    //   const data = Modal.getOrCreateInstance(target);
-    //   data.toggle(this);
-    // });
 }
