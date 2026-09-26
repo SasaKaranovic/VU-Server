@@ -146,4 +146,7 @@ Section "Uninstall"
   ; Remove windows start
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VUServer"
 
+  ; Remove Add/Remove Programs entry
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}"
+
 SectionEnd
