@@ -2,7 +2,6 @@ import os
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
-from functools import partial, partialmethod
 
 def colorize(data, color):
     colors = {'none': "0",

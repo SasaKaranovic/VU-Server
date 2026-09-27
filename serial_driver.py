@@ -1,7 +1,6 @@
 import time
 from threading import Lock
 import serial as _serial
-import serial.tools.list_ports as _lp
 import serial.tools.list_ports_common as _lpc
 from serial.tools.list_ports import comports
 from dials.base_logger import logger

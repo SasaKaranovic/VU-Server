@@ -3,7 +3,6 @@ import os
 import signal
 import argparse
 import zlib
-import time
 import re
 import functools
 from concurrent.futures import ThreadPoolExecutor
