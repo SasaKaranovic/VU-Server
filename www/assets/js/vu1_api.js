@@ -21,24 +21,9 @@ function api_request(url)
 }
 
 
-function vu1_get_dial_list(return_dict=false)
+function vu1_get_dial_list()
 {
-    const dial_data = api_request('dial/list'+'?key='+ API_MASTER_KEY);
-    var dials = [];
-
-    if(return_dict)
-    {
-        for (const [key, value] of Object.entries(dial_data))
-        {
-            dials[value['uid']] = value;
-        }
-    }
-    else
-    {
-        dials = dial_data;
-    }
-
-    return dials;
+    return api_request('dial/list'+'?key='+ API_MASTER_KEY);
 }
 
 function vu1_get_dial_info(uid)
@@ -47,22 +32,7 @@ function vu1_get_dial_info(uid)
 }
 
 
-function vu1_get_api_keys(return_dict=false)
+function vu1_get_api_keys()
 {
-    const api_keys = api_request('admin/keys/list?admin_key='+ API_MASTER_KEY);
-    var keys = [];
-
-    if(return_dict)
-    {
-        for (const [key, value] of Object.entries(api_keys))
-        {
-            keys[value['uid']] = value;
-        }
-    }
-    else
-    {
-        keys = api_keys;
-    }
-
-    return keys;
+    return api_request('admin/keys/list?admin_key='+ API_MASTER_KEY);
 }

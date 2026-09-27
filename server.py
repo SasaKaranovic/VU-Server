@@ -215,11 +215,8 @@ class Device_Set_Image(BaseHandler):
         # If this is a different image from existing one
         if self.different_image_uploaded(current_img, new_img) or force_img_update:
 
-            # Remove existing image (if exists)
-            if os.path.exists(current_img):
-                os.remove(current_img)
-            # Move (rename) new image and set as current
-            os.rename(new_img, current_img)
+            # Atomically replace the existing image (if any) with the new one
+            os.replace(new_img, current_img)
 
 
             if self.handler.dial_set_image(dial_uid=dial_uid, image_file=current_img):
@@ -227,6 +224,7 @@ class Device_Set_Image(BaseHandler):
             return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
 
         logger.debug(f"Skipping dial `{dial_uid}` image update. Contents already match.")
+        os.remove(new_img)
         return self.send_response(status='ok', message='Image CRC already maches existing one. Skipping update.')
 
     def handle_image_upload(self, dial_uid):
@@ -245,6 +243,9 @@ class Device_Set_Image(BaseHandler):
         return file_path
 
     def different_image_uploaded(self, old, new):
+        # get_file_crc reports a missing file as "00000000", a valid CRC.
+        if not os.path.exists(old):
+            return True
         if self.get_file_crc(old) != self.get_file_crc(new):
             return True
         return False
@@ -416,8 +417,9 @@ class Dial_Set_Calibration(BaseHandler):
             return
 
         if dac_calibration is not None:
-            await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False)
-            return self.send_response(status='ok', message="Calibration value updated", status_code=201)
+            if await self.run_blocking(self.handler.dial_set_calibration, dial_uid=gaugeUID, value=dac_calibration, fullScale=False):
+                return self.send_response(status='ok', message="Calibration value updated", status_code=201)
+            return self.send_response(status='fail', message='Invalid dial_uid or device is offline.', status_code=503)
         return self.send_response(status='fail', message="Device not present", status_code=406)
 
 class Dial_Set_Easing_Dial(BaseHandler):
@@ -684,6 +686,7 @@ class Dial_API_Service(Application):
             (r"/api/v0/admin/keys/create", Admin_Keys_Create, handlers_config),
             (r"/api/v0/admin/keys/remove", Admin_Keys_Remove, handlers_config),
             (r"/api/v0/admin/keys/update", Admin_Keys_Update, handlers_config),
+            (r"/api/.*", Default_404_Handler),
             (r"/", FileHandler),
             (r'/(.*)', StaticFileHandler, {'path': WEB_ROOT}),
         ]

@@ -9,7 +9,7 @@ import database as db
 class ServerConfig:
     # Shared, read-only defaults. Callers must copy these before storing them on
     # an instance so per-instance mutation never leaks back into the defaults.
-    server_default = {'hostname': 'localhost', 'port': 3000, 'communication_timeout': 10, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
+    server_default = {'hostname': 'localhost', 'port': 5340, 'communication_timeout': 10, 'master_key': 'cTpAWYuRpA2zx75Yh961Cg' }
     hardware_default = {'port': None }
 
     def __init__(self, config_file='config.yaml'):
@@ -74,7 +74,7 @@ class ServerConfig:
         elif ('hostname' not in cfg['server'] or
              'port' not in cfg['server'] or
              'communication_timeout' not in cfg['server'] or
-             'master_key' not in cfg['server']):
+             not cfg['server'].get('master_key')):
             show_warning_msg("Missing Key", f"Config file '{self.config_path}' \r\n"\
                              "must have `hostname`, `port`, `communication_timeout` and `master_key` entries!\r\n"\
                              "Using defaul values for this session.")
@@ -182,6 +182,7 @@ class ServerConfig:
         # Update key
         if not self.database.api_key_update(key_uid=key_uid, key_name=key_name):
             return False
+        self.list_keys(reload=True)
         return True
 
     def delete_api_key(self, key_uid):

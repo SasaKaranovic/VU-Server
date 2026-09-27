@@ -139,10 +139,14 @@ Section "Uninstall"
   ; Install dir
   Delete "$INSTDIR\*.*"
   Delete "$INSTDIR\Uninstall.exe"
-  Delete "$smprograms\VUDials\"
+  Delete "$SMPROGRAMS\${COMPANYNAME}\${APPNAME}.lnk"
+  RMDir "$SMPROGRAMS\${COMPANYNAME}"
   RMDir /r "$INSTDIR"
 
   ; Remove windows start
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VUServer"
+
+  ; Remove Add/Remove Programs entry
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}"
 
 SectionEnd

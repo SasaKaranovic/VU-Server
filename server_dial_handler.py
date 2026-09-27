@@ -369,8 +369,7 @@ class ServerDialHandler:
             return False
 
         value = self._convert_to_int(value)
-        self.dial_driver.dial_single_set_raw(self.dials[dial_uid]['index'], value)
-        return True
+        return bool(self.dial_driver.dial_single_set_raw(self.dials[dial_uid]['index'], value))
 
 
     # Debug function, mainly used for dial offset/calibration
@@ -380,8 +379,7 @@ class ServerDialHandler:
             return False
 
         value = self._convert_to_int(value)
-        self.dial_driver.dial_calibrate(self.dials[dial_uid]['index'], value, fullScale)
-        return True
+        return bool(self.dial_driver.dial_calibrate(self.dials[dial_uid]['index'], value, fullScale))
 
     def dial_set_easing_dial(self, dial_uid, step=None, period=None):
         if not self._dial_exists(dial_uid):

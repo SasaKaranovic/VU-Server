@@ -152,9 +152,9 @@ class DialsDB:
         # Rename key
         if key_name is not None:
             if level is not None:
-                self._query("UPDATE `api_keys` SET `key_name`=?, `key_level`=? WHERE `key_id`=?", (key_name, level, key_id))
+                self._insert("UPDATE `api_keys` SET `key_name`=?, `key_level`=? WHERE `key_id`=?", (key_name, level, key_id))
             else:
-                self._query("UPDATE `api_keys` SET `key_name`=? WHERE `key_id`=?", (key_name, key_id))
+                self._insert("UPDATE `api_keys` SET `key_name`=? WHERE `key_id`=?", (key_name, key_id))
             return self._more_than_one_changed()
         return False
 
