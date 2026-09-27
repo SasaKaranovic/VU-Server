@@ -57,8 +57,6 @@ jobs:
           --add-data="www/*.html;www/"
           --add-data="www/*.ico;www/"
           --add-data="upload/img_blank;upload/"
-          --hiddenimport="pywin32"
-          --hiddenimport="win32timezone"
           --uac-admin
           --noconsole
           server.py
@@ -71,28 +69,9 @@ jobs:
         directory: ${{ github.workspace }}\Artifacts
         filename: 'VUServer.zip'
 
-    # We are currently limited to offline signing.
-    # So we are skipping the online installer creation
-    ## Install NSIS
-    #- name: Install NSIS
-    #  run: |
-    #    choco install nsis
-    #
-    #- name: Create installer
-    #  run: |
-    #    makensis /DINSTALLEROUTPUT="${{ github.workspace }}\Artifacts\VU1-Installer.exe" /DDIRDIST="${{ github.workspace }}\Artifacts\VUServer" /DDIRSOURCE="${{ github.workspace }}" ${{ github.workspace }}\installer\install.nsi
-
     - run: dir ${{ github.workspace }}\Artifacts\VUServer
     - run: dir ${{ github.workspace }}\Artifacts
     - run: dir ${{ github.workspace }}
-
-    ## Upload installer
-    #- name: Upload build artifact
-    #  uses: actions/upload-artifact@v6
-    #  with:
-    #    name: ${{ env.App_Packages_Archive }}_installer.exe
-    #    path: ${{ github.workspace }}/Artifacts/VU1-Installer.exe
-    #  if: ${{ always() }}
 
     # Create the release: https://github.com/softprops/action-gh-release
     - name: Release
