@@ -191,7 +191,7 @@ function gui_update_dial_ui()
         $('#dial-easing-period').text(dial_info['easing']['dial_period']);
         $('#backlight-easing-step').text(dial_info['easing']['backlight_step']);
         $('#backlight-easing-period').text(dial_info['easing']['backlight_period']);
-        $("#dial-background-img").attr("src","/api/v0/dial/"+dial_uid+"/image/get");
+        $("#dial-background-img").attr("src","/api/v0/dial/"+dial_uid+"/image/get?key="+ API_MASTER_KEY);
 
     });
 }
