@@ -34,7 +34,7 @@ function gui_select_all_dials(checked)
 
 function gui_update_available_dials()
 {
-    const available_dials = vu1_get_dial_list(false);
+    const available_dials = vu1_get_dial_list();
 
     $('#modal-dials-list').text("");
 
@@ -58,7 +58,7 @@ function gui_update_available_dials()
 
 function gui_update_api_key_ui()
 {
-    const available_api_keys = vu1_get_api_keys(false);
+    const available_api_keys = vu1_get_api_keys();
     const target_key = $.urlParam('key_id')
     key_info = false;
 

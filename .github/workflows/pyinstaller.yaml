@@ -55,7 +55,6 @@ jobs:
           --add-data="www/assets/img/*;www/assets/img"
           --add-data="www/assets/js/*;www/assets/js"
           --add-data="www/views/*;www/views"
-          --add-data="www/*.png;www/"
           --add-data="www/*.html;www/"
           --add-data="www/*.ico;www/"
           --add-data="upload/img_blank;upload/"

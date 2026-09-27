@@ -18,7 +18,7 @@ $("#btn-reset-all-dials").on( "click", function() {
 
 function gui_update_dial_ui()
 {
-    const dials = vu1_get_dial_list(false);
+    const dials = vu1_get_dial_list();
 
     $.each( dials, function( key, val ) {
         $('#table_dials').append('<tr>\
