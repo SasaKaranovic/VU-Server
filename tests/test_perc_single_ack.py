@@ -17,8 +17,6 @@ ACK, two different symptoms -- which is why it looked intermittent.
 """
 import types
 
-import pytest
-
 from dial_driver import DialSerialDriver
 
 

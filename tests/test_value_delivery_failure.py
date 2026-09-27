@@ -12,8 +12,6 @@ BACKLIGHT_MAX_FAILURES consecutive failures the dial is latched unresponsive
 until a new request re-arms it. That keeps a dead dial from stalling the
 serial worker on every 200ms tick.
 """
-import types
-
 import server_dial_handler
 from server_dial_handler import ServerDialHandler
 
