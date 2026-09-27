@@ -14,7 +14,6 @@ These are now offloaded to a dedicated single-worker executor. That means:
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-import pytest
 import tornado.testing
 import tornado.web
 

@@ -9,7 +9,6 @@ fell through to `return ret['data']` -- the raw status string. `'00000001'`
 NAK'd backlight write, percent-set, easing set, calibrate or reset was logged
 as delivered and the retry/backoff machinery only ever fired on timeouts.
 """
-import types
 from threading import Lock
 
 from dial_driver import DialSerialDriver
