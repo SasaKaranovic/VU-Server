@@ -70,14 +70,15 @@ class BaseHandler(RequestHandler):
 
     def api_key_has_access_to_dial(self, gaugeUID, api_key=None):
         if api_key is None:
-            api_key = self.get_argument('key', None)
+            api_key = self.request.headers.get('X-API-Key', None) or self.get_argument('key', None)
 
         if not self.config.api_key_has_access_to_dial(api_key, gaugeUID):
             return False
         return True
 
     def is_valid_api_key(self):
-        if not self.config.is_valid_api_key(self.get_argument('key', None)):
+        api_key = self.request.headers.get('X-API-Key', None) or self.get_argument('key', None)
+        if not self.config.is_valid_api_key(api_key):
             return False
         return True
 
@@ -98,7 +99,7 @@ class BaseHandler(RequestHandler):
         return True
 
     def valid_admin_key(self):
-        admin_key = self.get_argument('admin_key', None)
+        admin_key = self.request.headers.get('X-Admin-Key', None) or self.get_argument('admin_key', None)
         if not admin_key:
             logger.error("Missing API key")
             self.send_response(status='fail', message='Invalid or missing API key.', status_code=401)
