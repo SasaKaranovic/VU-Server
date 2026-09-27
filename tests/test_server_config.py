@@ -1,0 +1,61 @@
+import pytest
+
+import server_config
+from database import DialsDB
+from server_config import ServerConfig
+
+
+VALID_CONFIG = """\
+server:
+  hostname: localhost
+  port: 5340
+  communication_timeout: 10
+  master_key: TESTMASTERKEY
+
+hardware:
+  port:
+"""
+
+
+@pytest.fixture
+def make_config(tmp_path, monkeypatch):
+    """Build a ServerConfig from YAML text, backed by a throwaway database."""
+    db_file = str(tmp_path / "config_test.db")
+    monkeypatch.setattr(server_config.db, 'DialsDB',
+                        lambda **_: DialsDB(database_file=db_file, init_if_missing=True))
+    monkeypatch.setattr(server_config, 'show_error_msg', lambda *a, **k: None)
+    monkeypatch.setattr(server_config, 'show_warning_msg', lambda *a, **k: None)
+
+    def _make(yaml_text=VALID_CONFIG):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml_text, encoding="utf-8")
+        return ServerConfig(str(config_file))
+    return _make
+
+
+def test_update_api_key_refreshes_key_list(make_config):
+    config = make_config()
+    key = config.create_api_key('Old name', 1)
+
+    assert config.update_api_key(key, 'New name') is True
+    assert config.list_keys()[key]['key_name'] == 'New name'
+
+
+def test_default_port_matches_shipped_config(make_config):
+    # With no usable config the server must use the same port as config.yaml
+    # and the fallback in server.py.
+    config = make_config("")
+
+    assert config.get_server_config()['port'] == 5340
+
+
+def test_empty_master_key_shows_missing_key_warning(make_config, monkeypatch):
+    # `master_key:` with no value loads as None, which crashed startup with a
+    # NOT NULL IntegrityError instead of reaching the "Missing Key" warning.
+    warnings = []
+    monkeypatch.setattr(server_config, 'show_warning_msg',
+                        lambda title, *a, **k: warnings.append(title))
+
+    make_config(VALID_CONFIG.replace("master_key: TESTMASTERKEY", "master_key:"))
+
+    assert warnings == ["Missing Key"]

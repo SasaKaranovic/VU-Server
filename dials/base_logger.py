@@ -1,5 +1,4 @@
 import os
-import getpass
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
@@ -74,11 +73,11 @@ def set_logger_level(level='info'):
 log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(lineno)d) %(message)s')
 # Linux
 if sys.platform in ["linux", "linux2"]:
-    logFile = f'/home/{getpass.getuser()}/KaranovicResearch/vudials/server.log'
+    logFile = os.path.join(os.path.expanduser('~'), 'KaranovicResearch', 'vudials', 'server.log')
 
 # MacOS
 elif sys.platform == "darwin":
-    logFile = f'~/Library/Logs/KaranovicResearch/vudials/server.log'
+    logFile = os.path.expanduser('~/Library/Logs/KaranovicResearch/vudials/server.log')
 
 # Windows
 elif sys.platform == "win32":

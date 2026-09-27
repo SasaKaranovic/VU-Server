@@ -74,7 +74,7 @@ Let's say we want to set the dial with the UID `3E0075000650564139323920` to `50
 We can make a simple GET request using `wget` (or `curl` if you prefer):
 
 ```bash
-wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value=50&key=cTpAWYuRpA2zx75Yh961C" ; echo
+wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value=50&key=cTpAWYuRpA2zx75Yh961Cg" ; echo
 ```
 
 You can use pipe redirects in your terminal to redirect output of applications to VU dials.
@@ -88,7 +88,7 @@ echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')]
 This command will output an integer that represents CPU usage in percentage. We can then forward this information to VU server using pipe redirects
 
 ```bash
-echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')] | xargs -I{} wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value={}&key=cTpAWYuRpA2zx75Yh961C"; echo
+echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')] | xargs -I{} wget -O- -q "http://localhost:5340/api/v0/dial/3E0075000650564139323920/set?value={}&key=cTpAWYuRpA2zx75Yh961Cg"; echo
 ```
 
 Please keep in mind that this is a very "simple" example (and yet looks somewhat complicated), but the main idea is that you can easily redirect output of any application on your system and send it to VU Server to have it displayed on your VU1 dials.

@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import pytest
 
 from database import DialsDB
@@ -77,3 +78,16 @@ def test_api_key_delete_with_dial_access_reports_success(db):
 
     assert db.api_key_delete(key) is True
     assert db.api_key_get_id(key) is None
+
+
+def test_api_key_update_is_committed(db):
+    key = db.api_key_generate(key_name='Old name', level=1)
+
+    assert db.api_key_update(key, key_name='New name') is True
+
+    # A brand new connection only sees committed rows.
+    verify = sqlite3.connect(db.database_file)
+    row = verify.execute("SELECT key_name FROM api_keys WHERE key_uid=?", (key,)).fetchone()
+    verify.close()
+
+    assert row[0] == 'New name'
