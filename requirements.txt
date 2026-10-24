@@ -1,6 +1,6 @@
 tornado==6.5.10
 numpy==2.5.4
-pillow==12.3.0
+pillow==13.0.0
 ruamel.yaml==0.19.1
 pyserial==3.5
 pyinstaller==6.22.3
