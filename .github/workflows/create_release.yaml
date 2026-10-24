@@ -20,8 +20,8 @@ jobs:
       App_Packages_Archive: VU1_Server
 
     steps:
-    - uses: actions/checkout@v5
-    - uses: actions/setup-python@v6
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
       with:
         python-version: '3.12'
         update-environment: true
@@ -62,7 +62,7 @@ jobs:
           server.py
 
     - name: Archive Release
-      uses: thedoctor0/zip-release@0.7.5
+      uses: thedoctor0/zip-release@0.7.6
       with:
         type: 'zip'
         path: VUServer
