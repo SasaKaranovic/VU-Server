@@ -58,3 +58,10 @@ class DialGetListTestCase(tornado.testing.AsyncHTTPTestCase):
 
         assert response.code == 200
         assert body['data'][0]['backlight'] == {'red': 1, 'green': 2, 'blue': 3}
+
+    def test_list_items_have_no_event_stream_fields(self):
+        response = self.fetch("/api/v0/dial/list?key=testkey")
+        body = json.loads(response.body)
+
+        assert response.code == 200
+        assert set(body['data'][0]) == {'uid', 'dial_name', 'value', 'backlight', 'image_file'}
