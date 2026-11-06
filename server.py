@@ -1,5 +1,8 @@
 import sys
 import os
+import asyncio
+import json
+import time
 import signal
 import argparse
 import zlib
@@ -31,6 +34,33 @@ def pid_lock(service_name, create=True):
     else:
         if os.path.exists(pid_file):
             os.remove(pid_file)
+
+def public_dial_state(uid, dial):
+    """The /api/v0/dial/list item for one dial: a backlight copy without the unused white channel."""
+    backlight = dict(dial['backlight'])
+    backlight.pop('white', None)
+    return {'uid': uid, 'dial_name': dial['dial_name'], 'value': dial['value'],
+            'backlight': backlight, 'image_file': dial['image_file']}
+
+def dial_delivery_state(dial, kind):
+    """Delivery state of `kind` ('value' or 'backlight'): 'delivered', 'pending', 'retrying' or 'unresponsive'."""
+    if dial.get(f'{kind}_unresponsive', False):
+        return 'unresponsive'
+    if not dial.get(f'{kind}_changed', False):
+        return 'delivered'
+    if dial.get(f'{kind}_fail_count', 0) > 0:
+        return 'retrying'
+    return 'pending'
+
+def push_dial_events(streams):
+    """Call push_dials() on each stream; a stream that raises is logged and ended. IOLoop thread only."""
+    # Iterate a copy: ending a stream removes it from the set.
+    for stream in list(streams):
+        try:
+            stream.push_dials()
+        except Exception: # pylint: disable=broad-exception-caught
+            logger.exception("Dropping a dial event stream after a push error")
+            stream.end_stream()
 
 class BaseHandler(RequestHandler):
     def initialize(self, handler, config, executor=None):
@@ -303,26 +333,95 @@ class Dial_Get_List(BaseHandler):
             return self.send_response(status='fail', message='Unauthorized', status_code=401)
 
         dials = self.handler.get_dial_info()
-        # logger.debug(dials)
+        data = [public_dial_state(uid, dials[uid]) for uid in dials
+                if self.api_key_has_access_to_dial(gaugeUID=uid)]
+        return self.send_response(status='ok', data=data)
 
-        # Reshape dials data to respond with only relevant information
-        dialData = []
+class Dial_Get_Events(BaseHandler):
+    """Server-Sent Events stream of the dials the request's key can access."""
+    KEEPALIVE_SECONDS = 15
+
+    def initialize(self, handler, config, executor=None, streams=None):
+        super().initialize(handler, config, executor)
+        self.streams = streams # pylint: disable=attribute-defined-outside-init
+        # Created here: on_connection_close can run before get() starts.
+        self.closed = asyncio.Event() # pylint: disable=attribute-defined-outside-init
+        self.last_data = None # pylint: disable=attribute-defined-outside-init
+        self.last_write = 0.0 # pylint: disable=attribute-defined-outside-init
+        self.pending_flush = None # pylint: disable=attribute-defined-outside-init
+
+    async def get(self):
+        logger.debug("Request: DIAL_EVENTS")
+        if not self.is_valid_api_key():
+            return self.send_response(status='fail', message='Unauthorized', status_code=401)
+        self.set_header('Content-Type', 'text/event-stream')
+        self.set_header('Cache-Control', 'no-cache')
+        self.streams.add(self)
+        try:
+            self.push_dials()
+            await self.closed.wait()
+        finally:
+            self.streams.discard(self)
+        if self.request.version != 'HTTP/1.1':
+            # Tornado chunks only HTTP/1.1 responses, so an HTTP/1.0 keep-alive client sees the body end only when the connection closes.
+            if self.pending_flush is not None and not self.pending_flush.done():
+                # Tornado resolves the newest write future when an older write completes, so closing before this drains drops the last event.
+                await self.pending_flush
+            connection = self.request.connection
+            self.finish().add_done_callback(lambda _flushed: connection.close())
+        return None
+
+    def on_connection_close(self):
+        super().on_connection_close()
+        self.end_stream()
+
+    def end_stream(self):
+        """Unsubscribe and wake get(), which ends the response."""
+        self.streams.discard(self)
+        self.closed.set()
+
+    def visible_dials(self):
+        """Event items for the dials this key can access, in handler order."""
+        dials = self.handler.get_dial_info()
+        revisions = self.handler.image_revision
+        items = []
         for uid in dials:
-            tmp_dial =  {
-                            'uid' : uid,
-                            'dial_name': dials[uid]['dial_name'],
-                            'value': dials[uid]['value'],
-                            'backlight': dict(dials[uid]['backlight']),
-                            'image_file' : dials[uid]['image_file']
-                        }
-            # Remove unused keys
-            tmp_dial['backlight'].pop('white', None)
+            if not self.api_key_has_access_to_dial(gaugeUID=uid):
+                continue
+            dial = dials[uid]
+            item = public_dial_state(uid, dial)
+            item['image_rev'] = revisions.get(uid, 0)
+            item['value_delivery'] = dial_delivery_state(dial, 'value')
+            item['backlight_delivery'] = dial_delivery_state(dial, 'backlight')
+            items.append(item)
+        return items
 
-            # If key has access to dial
-            if self.api_key_has_access_to_dial(gaugeUID=uid):
-                dialData.append(tmp_dial)
-
-        return self.send_response(status='ok', data=dialData)
+    def push_dials(self):
+        """Write `key_revoked` and end the stream if the key is gone; otherwise a `dials` event if this
+        key's view changed, or a keepalive when due. Skips while a flush is pending. IOLoop thread only."""
+        if self.closed.is_set():
+            return
+        if not self.is_valid_api_key():
+            self.write('event: key_revoked\ndata: {}\n\n')  # finish() flushes it
+            self.end_stream()
+            return
+        # A second flush() while one is pending orphans the first future; skipping also bounds slow readers.
+        if self.pending_flush is not None and not self.pending_flush.done():
+            return
+        data = json.dumps({'dials': self.visible_dials()}, separators=(',', ':'))
+        now = time.monotonic()
+        if data != self.last_data:
+            self.write(f'event: dials\ndata: {data}\n\n')
+            self.last_data = data # pylint: disable=attribute-defined-outside-init
+        elif now - self.last_write >= self.KEEPALIVE_SECONDS:
+            self.write(': keepalive\n\n')
+        else:
+            return
+        self.last_write = now # pylint: disable=attribute-defined-outside-init
+        self.pending_flush = self.flush() # pylint: disable=attribute-defined-outside-init
+        if self.pending_flush.done() and self.pending_flush.exception() is not None:
+            # The peer left before Tornado registered its close callback, so on_connection_close never runs.
+            self.end_stream()
 
 
 class Dial_Provision(BaseHandler):
@@ -620,7 +719,7 @@ class FileHandler(RequestHandler):
             self.write(source_file.read())
 
 
-class Dial_API_Service(Application):
+class Dial_API_Service(Application): # pylint: disable=too-many-instance-attributes
     def __init__(self):
         pid_lock('server', True)
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -662,11 +761,14 @@ class Dial_API_Service(Application):
             logger.info("No dials found. Searching the bus for new ones...")
             self.dial_handler.provision_dials(num_attempts=3)
 
+        # Open Dial_Get_Events handlers; only touched on the IOLoop thread.
+        self.dial_event_streams = set()
         handlers_config = { "handler":self.dial_handler, "config":self.config, "executor":self.serial_executor }
         self.handlers = [
             (r"/api/v0/dial/provision", Dial_Provision, handlers_config),
             (r"/api/v0/dial/reset_all", Dial_Reset_All, handlers_config),
             (r"/api/v0/dial/list", Dial_Get_List, handlers_config),
+            (r"/api/v0/dial/events", Dial_Get_Events, dict(handlers_config, streams=self.dial_event_streams)),
             (r"/api/v0/dial/([0-9A-F]*?)/status", Device_Status_Handler, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/set", Device_Set_Handler, handlers_config),
             (r"/api/v0/dial/([0-9A-F]*?)/setRaw", Device_SetRaw_Handler, handlers_config),
@@ -729,6 +831,15 @@ class Dial_API_Service(Application):
             logger.info('Shutdown')
         io_loop.call_later(3, stop_loop)
 
+    async def periodic_dial_update(self):
+        """Run one serial update pass on the serial worker, keeping blocking I/O off the IOLoop, then push dial state to event streams."""
+        try:
+            await IOLoop.current().run_in_executor(self.serial_executor,
+                                                   self.dial_handler.periodic_dial_update)
+        finally:
+            # Back on the IOLoop thread, the only thread that may write to client streams; runs even when the serial job raises.
+            push_dial_events(self.dial_event_streams)
+
     def run_forever(self):
         logger.info("Karanovic Research Dials - Starting API server")
         app = Application(self.handlers, **self.server_settings)
@@ -759,14 +870,7 @@ class Dial_API_Service(Application):
             logger.error("Check your 'config.yaml' or add it manually under 'server' section.")
             sys.exit(0)
 
-        # Run the periodic dial update on the serial worker thread so its
-        # blocking serial writes (value/backlight/image, incl. chunked image
-        # sends with their inter-chunk sleeps) never freeze the IOLoop.
-        async def periodic_dial_update():
-            await IOLoop.current().run_in_executor(self.serial_executor,
-                                                   self.dial_handler.periodic_dial_update)
-
-        pc = PeriodicCallback(periodic_dial_update, dial_update_period)
+        pc = PeriodicCallback(self.periodic_dial_update, dial_update_period)
         pc.start()
 
         IOLoop.instance().start()

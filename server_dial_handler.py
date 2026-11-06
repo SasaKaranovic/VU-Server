@@ -37,6 +37,8 @@ class ServerDialHandler:
         # ServerDialHandler instance).
         self.dials = {}
         self.hub_info = {}
+        # uid -> number of images accepted by dial_set_image; read by the event stream.
+        self.image_revision = {}
 
         # Communication timeout
         cfg = self.server_config.get_server_config()
@@ -454,6 +456,7 @@ class ServerDialHandler:
             return False
 
         logger.debug(f"Queueing dial {dial_uid} background image to {image_file}")
+        self.image_revision[dial_uid] = self.image_revision.get(dial_uid, 0) + 1
         self.dials[dial_uid]['image_file'] = image_file
         self.dials[dial_uid]['image_changed'] = True
         return True

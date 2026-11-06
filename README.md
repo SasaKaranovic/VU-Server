@@ -61,6 +61,38 @@ We have a simple example that describes how to run VU Server from source code on
 [Jump to Linux Running From Source Code read me](Running_from_source_on_linux.md)
 
 
+# Watching dial state
+
+`GET /api/v0/dial/events?key=<api key>` streams the dials your key can access as Server-Sent Events. Use it to see changes made by other clients and whether each change has reached the dial. Writes still go through the REST API.
+
+```bash
+curl -N "http://localhost:5340/api/v0/dial/events?key=cTpAWYuRpA2zx75Yh961Cg"
+```
+
+`-N` stops curl from buffering. Each `dials` event carries the full list for your key, in the same shape as `/api/v0/dial/list` plus three fields:
+
+```
+event: dials
+data: {"dials":[{"uid":"3E0075000650564139323920","dial_name":"CPU","value":60,"backlight":{"red":0,"green":50,"blue":100},"image_file":"/opt/VU-Server/upload/img_3E0075000650564139323920","image_rev":0,"value_delivery":"pending","backlight_delivery":"delivered"}]}
+```
+
+Replace your state with each event instead of merging it. A dial that disappears was unplugged or your key lost access to it. The server checks for changes once per `dial_update_period`, so a burst of writes arrives as one event with the latest values. Every connection starts with a `dials` event, even when the list is empty, and there are no event ids to resume from.
+
+`value_delivery` and `backlight_delivery` read `delivered` once the hub acknowledged the current value, `pending` while it is queued, `retrying` after a failed attempt and `unresponsive` once the server gave up. Send the value again to retry an unresponsive dial. A write delivered within one check can go straight to `delivered`.
+
+`image_rev` changes whenever a new image is uploaded, so fetch `/api/v0/dial/<uid>/image/get` when it does. It restarts at 0 with the server, so fetch every image again whenever the stream reconnects.
+
+A missing or unknown key gets a `401` JSON response. If the key is deleted, the stream sends `event: key_revoked` and ends. Lines starting with `:` are keepalives sent after 15 seconds without an event.
+
+In a browser, use `EventSource` and `addEventListener`, because named events do not reach `onmessage`. Open one stream per page, since browsers allow about six connections per server.
+
+```js
+const events = new EventSource(`http://localhost:5340/api/v0/dial/events?key=${key}`);
+events.addEventListener('dials', (e) => render(JSON.parse(e.data).dials));
+events.addEventListener('key_revoked', () => events.close());
+```
+
+
 # Want to contribute?
 
 As mentioned, right now, VU Dials adoption is the main hurdle for everyone enjoying VU dials in combination with their favourite game/applications/service.
